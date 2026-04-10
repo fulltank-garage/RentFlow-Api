@@ -10,8 +10,7 @@ func CORSMiddleware() gin.HandlerFunc {
 
 		allowedOrigins := map[string]bool{
 			"https://sci-stock-app.vercel.app": true,
-			"https://from-empolyee-sci.vercel.app": true,
-			"http://localhost:5173": true,
+			"http://localhost:3000": true,
 		}
 
 		if allowedOrigins[origin] {
