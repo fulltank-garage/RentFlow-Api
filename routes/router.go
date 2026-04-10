@@ -36,23 +36,12 @@ func SetupRoutes(r *gin.Engine) {
 		// จัดการสินค้าตามหมวดหมู่
 
 		// จัดการแดชบอร์ด
-		api.GET("/dashboard/total", controllers.GetTotalProducts)             // GET /api/dashboard/total // ดึงข้อมูลสรุปจำนวนสินค้าทั้งหมด
-		api.GET("/dashboard/low-stock", controllers.GetLowStockProducts)      // GET /api/dashboard/low-stock // ดึงข้อมูลสินค้าที่ใกล้หมดสต๊อก
-		api.GET("/dashboard/out-of-stock", controllers.GetOutOfStockProducts) // GET /api/dashboard/out-of-stock // ดึงข้อมูลสินค้าที่หมดสต๊อก
-		api.GET("/dashboard/sales-summary", controllers.GetMonthlySalesSummary) // GET /api/dashboard/sales-summary // ดึงข้อมูลสรุปยอดขายรายเดือน
-		api.GET("/dashboard/sales-weekly", controllers.GetWeeklySalesCurrentMonth) // GET /api/dashboard/sales-weekly // ดึงข้อมูลสรุปยอดขายรายสัปดาห์
-		api.GET("/dashboard/top-selling-products", controllers.GetTopSellingProductsCurrentMonth,) // GET /api/dashboard/top-selling-products // ดึงข้อมูลสินค้าขายดี 3 อันดับแรกของเดือน
+		
 
 		// จัดการคำสั่งซื้อ
 
 		// จัดการแคชสินค้า
 		api.POST("/auth/refresh", controllers.RefreshAccessToken)                           // กลุ่มจัดการผู้ใช้ (จำกัดสิทธิ์ admin หรือ superadmin เท่านั้น)
-
-		// จัดการตารางการทำงาน
-		api.GET("/work-schedules", controllers.GetWorkSchedules)          // GET /api/work-schedules // ดึงตารางการทำงานทั้งหมด
-		api.POST("/work-schedules", controllers.CreateWorkSchedule)       // POST /api/work-schedules // สร้างตารางการทำงานใหม่
-		api.PUT("/work-schedules/:id", controllers.UpdateWorkSchedule)    // PUT /api/work-schedules/:id // อัปเดตตารางการทำงานตาม id
-		api.DELETE("/work-schedules/:id", controllers.DeleteWorkSchedule) // DELETE /api/work-schedules/:id // ลบตารางการทำงานตาม id
 
 		// จัดการผู้ใช้
 		usersGroup := api.Group("/users")              // กลุ่มจัดการผู้ใช้ (จำกัดสิทธิ์ admin หรือ superadmin เท่านั้น)
