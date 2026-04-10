@@ -39,6 +39,5 @@ func main() {
 	router.Use(gin.Logger())
 	router.Use(gin.Recovery())
 	routes.SetupRoutes(router)
-	routes.BackupRoutes(router, db)
 	router.Run(":8080")
 }
