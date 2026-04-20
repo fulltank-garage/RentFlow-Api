@@ -53,8 +53,13 @@ func RentFlowAuthWithGoogle(c *gin.Context) {
 
 	var user models.RentFlowUser
 	result := config.DB.Where("email = ?", email).First(&user)
-	isNewUser := result.Error != nil
-	if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+	isNewUser := false
+	switch {
+	case result.Error == nil:
+		isNewUser = false
+	case errors.Is(result.Error, gorm.ErrRecordNotFound):
+		isNewUser = true
+	default:
 		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถค้นหาผู้ใช้ได้")
 		return
 	}
@@ -152,11 +157,11 @@ func RentFlowRegister(c *gin.Context) {
 
 	var existing models.RentFlowUser
 	err := config.DB.Where("username = ? OR email = ?", username, username).First(&existing).Error
-	if err == nil {
+	switch {
+	case err == nil:
 		rentFlowError(c, http.StatusConflict, "ชื่อผู้ใช้นี้ถูกใช้งานแล้ว")
 		return
-	}
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+	case !errors.Is(err, gorm.ErrRecordNotFound):
 		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถตรวจสอบข้อมูลผู้ใช้ได้")
 		return
 	}

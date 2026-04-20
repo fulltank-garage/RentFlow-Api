@@ -1,7 +1,6 @@
 package models
 
 import (
-	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -57,8 +56,6 @@ type RentFlowCar struct {
 	Transmission string         `gorm:"size:20;not null" json:"transmission"`
 	Fuel         string         `gorm:"size:20;not null" json:"fuel"`
 	PricePerDay  int64          `gorm:"not null" json:"pricePerDay"`
-	ImageURL     string         `gorm:"size:500" json:"imageUrl"`
-	ImagesCSV    string         `gorm:"type:text" json:"-"`
 	Description  string         `gorm:"type:text" json:"description,omitempty"`
 	LocationID   string         `gorm:"size:40;index;not null" json:"locationId,omitempty"`
 	IsAvailable  bool           `gorm:"default:true" json:"isAvailable"`
@@ -71,20 +68,19 @@ func (RentFlowCar) TableName() string {
 	return "rentflow_cars"
 }
 
-func (c RentFlowCar) Images() []string {
-	if strings.TrimSpace(c.ImagesCSV) == "" {
-		return nil
-	}
+type RentFlowCarImage struct {
+	ID        string    `gorm:"primaryKey;size:120" json:"id"`
+	CarID     string    `gorm:"size:80;index;not null" json:"carId"`
+	SortOrder int       `gorm:"index;not null;default:0" json:"sortOrder"`
+	FileName  string    `gorm:"size:160" json:"fileName,omitempty"`
+	MimeType  string    `gorm:"size:80;not null" json:"mimeType"`
+	ImageBlob []byte    `gorm:"type:bytea;not null" json:"-"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
 
-	parts := strings.Split(c.ImagesCSV, ",")
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
-		if trimmed != "" {
-			out = append(out, trimmed)
-		}
-	}
-	return out
+func (RentFlowCarImage) TableName() string {
+	return "rentflow_car_images"
 }
 
 type RentFlowBooking struct {

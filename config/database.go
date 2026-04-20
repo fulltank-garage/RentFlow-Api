@@ -39,6 +39,7 @@ func ConnectDatabase() {
 		&models.RentFlowUser{},
 		&models.RentFlowBranch{},
 		&models.RentFlowCar{},
+		&models.RentFlowCarImage{},
 		&models.RentFlowBooking{},
 		&models.RentFlowPayment{},
 		&models.RentFlowNotification{},

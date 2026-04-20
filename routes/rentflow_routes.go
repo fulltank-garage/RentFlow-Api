@@ -16,6 +16,8 @@ func RegisterRentFlowRoutes(r *gin.Engine) {
 	r.POST("/auth/logout", controllers.RentFlowLogout)
 
 	r.GET("/cars", controllers.RentFlowGetCars)
+	r.GET("/cars/:carId/image", controllers.RentFlowGetCarPrimaryImage)
+	r.GET("/cars/:carId/images/:imageId", controllers.RentFlowGetCarImage)
 	r.GET("/branches", controllers.RentFlowGetBranches)
 	r.GET("/branches/:branchId", controllers.RentFlowGetBranchByID)
 	r.POST("/availability/check", controllers.RentFlowCheckAvailability)
@@ -38,6 +40,8 @@ func RegisterRentFlowRoutes(r *gin.Engine) {
 		protected.GET("/bookings/me", controllers.RentFlowGetMyBookings)
 		protected.GET("/bookings/:bookingId", controllers.RentFlowGetBookingByID)
 		protected.PATCH("/bookings/:bookingId/cancel", controllers.RentFlowCancelBooking)
+
+		protected.POST("/cars/:carId/images", controllers.RentFlowUploadCarImages)
 
 		protected.GET("/notifications", controllers.RentFlowGetNotifications)
 		protected.PATCH("/notifications/:notificationId/read", controllers.RentFlowMarkNotificationAsRead)

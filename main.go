@@ -8,6 +8,7 @@ import (
 	"rentflow-api/config"
 	"rentflow-api/models"
 	"rentflow-api/routes"
+	"rentflow-api/services"
 )
 
 func main() {
@@ -28,6 +29,7 @@ func main() {
 	if err := models.SeedRentFlowData(db); err != nil {
 		log.Fatal("เตรียมข้อมูลเริ่มต้นของ RentFlow ไม่สำเร็จ: ", err)
 	}
+	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
 
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()

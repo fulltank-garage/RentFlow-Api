@@ -223,8 +223,18 @@ func DeleteSession(ctx context.Context, token string) error {
 }
 
 func CacheKey(parts ...string) string {
-	hash := sha1.Sum([]byte(strings.Join(parts, "|")))
-	return rentFlowCachePrefix + hex.EncodeToString(hash[:])
+	prefix := rentFlowCachePrefix + "default"
+	keyParts := parts
+	if len(parts) > 0 {
+		prefix = strings.TrimSpace(parts[0])
+		if !strings.HasPrefix(prefix, rentFlowCachePrefix) {
+			prefix = rentFlowCachePrefix + prefix
+		}
+		keyParts = parts[1:]
+	}
+
+	hash := sha1.Sum([]byte(strings.Join(keyParts, "|")))
+	return prefix + ":" + hex.EncodeToString(hash[:])
 }
 
 func CacheGetJSON(ctx context.Context, key string, target interface{}) bool {
