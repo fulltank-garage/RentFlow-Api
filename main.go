@@ -12,7 +12,7 @@ import (
 
 func main() {
 	if err := godotenv.Load(".env"); err != nil {
-		log.Println("No .env file found, reading environment variables from system")
+		log.Println("ไม่พบไฟล์ .env กำลังอ่านค่าจากสภาพแวดล้อมของระบบแทน")
 	}
 
 	config.ConnectDatabase()
@@ -20,13 +20,13 @@ func main() {
 
 	config.ConnectRedis()
 	if config.RDB == nil {
-		log.Println("❌ Redis = NIL (ไม่ได้เชื่อม)")
+		log.Println("Redis ยังไม่ได้เชื่อมต่อ")
 	} else {
-		log.Println("✅ Redis = CONNECTED")
+		log.Println("Redis เชื่อมต่อแล้ว")
 	}
 
 	if err := models.SeedRentFlowData(db); err != nil {
-		log.Fatal("RentFlow seed failed: ", err)
+		log.Fatal("เตรียมข้อมูลเริ่มต้นของ RentFlow ไม่สำเร็จ: ", err)
 	}
 
 	gin.SetMode(gin.ReleaseMode)

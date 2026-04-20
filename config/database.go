@@ -16,7 +16,7 @@ var DB *gorm.DB
 
 func ConnectDatabase() {
 	if err := godotenv.Load(); err != nil {
-		log.Println("ไม่พบไฟล์ .env กำลังใช้ค่าจาก environment ของระบบแทน")
+		log.Println("ไม่พบไฟล์ .env กำลังใช้ค่าจากสภาพแวดล้อมของระบบแทน")
 	}
 
 	dsn := fmt.Sprintf(
@@ -42,5 +42,6 @@ func ConnectDatabase() {
 		&models.RentFlowBooking{},
 		&models.RentFlowPayment{},
 		&models.RentFlowNotification{},
+		&models.RentFlowReview{},
 	)
 }

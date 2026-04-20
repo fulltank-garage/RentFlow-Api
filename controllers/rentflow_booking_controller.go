@@ -68,6 +68,12 @@ func RentFlowCreateBooking(c *gin.Context) {
 		return
 	}
 
+	user, ok := middleware.CurrentRentFlowUser(c)
+	if !ok {
+		rentFlowError(c, http.StatusUnauthorized, "กรุณาเข้าสู่ระบบก่อน")
+		return
+	}
+
 	car, pickupDate, returnDate, ok := rentFlowValidateBookingDatesAndCar(c, payload.CarID, payload.PickupDate, payload.ReturnDate)
 	if !ok {
 		return
@@ -117,12 +123,8 @@ func RentFlowCreateBooking(c *gin.Context) {
 		CustomerName:   strings.TrimSpace(payload.CustomerName),
 		CustomerEmail:  customerEmail,
 		CustomerPhone:  strings.TrimSpace(payload.CustomerPhone),
-		UserEmail:      customerEmail,
-	}
-
-	if user, ok := middleware.CurrentRentFlowUser(c); ok {
-		booking.UserID = &user.ID
-		booking.UserEmail = user.Email
+		UserID:         &user.ID,
+		UserEmail:      user.Email,
 	}
 
 	if err := config.DB.Create(&booking).Error; err != nil {
@@ -342,12 +344,12 @@ func rentFlowValidateBookingDatesAndCar(c *gin.Context, carID, pickupDateRaw, re
 
 	pickupDate, err := services.ParseDateTime(pickupDateRaw)
 	if err != nil {
-		rentFlowError(c, http.StatusBadRequest, "pickupDate ไม่ถูกต้อง")
+		rentFlowError(c, http.StatusBadRequest, "วันรับรถไม่ถูกต้อง")
 		return models.RentFlowCar{}, time.Time{}, time.Time{}, false
 	}
 	returnDate, err := services.ParseDateTime(returnDateRaw)
 	if err != nil {
-		rentFlowError(c, http.StatusBadRequest, "returnDate ไม่ถูกต้อง")
+		rentFlowError(c, http.StatusBadRequest, "วันคืนรถไม่ถูกต้อง")
 		return models.RentFlowCar{}, time.Time{}, time.Time{}, false
 	}
 	if !returnDate.After(pickupDate) {

@@ -10,6 +10,8 @@ func RegisterRentFlowRoutes(r *gin.Engine) {
 	r.Use(middleware.AttachRentFlowSession())
 
 	r.POST("/auth/google", controllers.RentFlowAuthWithGoogle)
+	r.POST("/auth/register", controllers.RentFlowRegister)
+	r.POST("/auth/login", controllers.RentFlowLogin)
 	r.GET("/auth/me", controllers.RentFlowGetMe)
 	r.POST("/auth/logout", controllers.RentFlowLogout)
 
@@ -23,6 +25,8 @@ func RegisterRentFlowRoutes(r *gin.Engine) {
 	r.POST("/bookings", controllers.RentFlowCreateBooking)
 	r.POST("/payments", controllers.RentFlowCreatePayment)
 	r.GET("/payments/booking/:bookingId", controllers.RentFlowGetPaymentByBookingID)
+	r.GET("/reviews", controllers.RentFlowGetReviews)
+	r.POST("/reviews", controllers.RentFlowCreateReview)
 
 	protected := r.Group("/")
 	protected.Use(middleware.RequireRentFlowSession())

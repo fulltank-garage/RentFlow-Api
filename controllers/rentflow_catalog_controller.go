@@ -164,12 +164,12 @@ func RentFlowCheckAvailability(c *gin.Context) {
 
 	pickupDate, err := services.ParseDateTime(payload.PickupDate)
 	if err != nil {
-		rentFlowError(c, http.StatusBadRequest, "pickupDate ไม่ถูกต้อง")
+		rentFlowError(c, http.StatusBadRequest, "วันรับรถไม่ถูกต้อง")
 		return
 	}
 	returnDate, err := services.ParseDateTime(payload.ReturnDate)
 	if err != nil {
-		rentFlowError(c, http.StatusBadRequest, "returnDate ไม่ถูกต้อง")
+		rentFlowError(c, http.StatusBadRequest, "วันคืนรถไม่ถูกต้อง")
 		return
 	}
 

@@ -20,7 +20,7 @@ func ConnectRedis() {
 	}
 
 	if redisURL == "" {
-		log.Println("ไม่พบ REDIS_URL ระบบจะทำงานโดยไม่ใช้ Redis (fallback DB)")
+		log.Println("ไม่พบ REDIS_URL ระบบจะทำงานโดยไม่ใช้ Redis และใช้ฐานข้อมูลแทน")
 		return
 	}
 
@@ -40,7 +40,7 @@ func ConnectRedis() {
 	defer cancel()
 
 	if _, err := RDB.Ping(ctx).Result(); err != nil {
-		log.Println("เชื่อมต่อ Redis ไม่สำเร็จ จะใช้ DB แทน:", err)
+		log.Println("เชื่อมต่อ Redis ไม่สำเร็จ จะใช้ฐานข้อมูลแทน:", err)
 		RDB = nil
 		return
 	}

@@ -9,7 +9,10 @@ import (
 
 type RentFlowUser struct {
 	ID           string         `gorm:"primaryKey;size:40" json:"id"`
-	GoogleSub    string         `gorm:"size:120;uniqueIndex" json:"-"`
+	GoogleSub    *string        `gorm:"size:120;uniqueIndex" json:"-"`
+	Username     string         `gorm:"size:80;uniqueIndex" json:"username,omitempty"`
+	FirstName    string         `gorm:"size:80" json:"firstName,omitempty"`
+	LastName     string         `gorm:"size:80" json:"lastName,omitempty"`
 	Name         string         `gorm:"size:150;not null" json:"name"`
 	Email        string         `gorm:"size:150;uniqueIndex;not null" json:"email"`
 	Phone        string         `gorm:"size:30" json:"phone,omitempty"`
@@ -146,4 +149,19 @@ type RentFlowNotification struct {
 
 func (RentFlowNotification) TableName() string {
 	return "rentflow_notifications"
+}
+
+type RentFlowReview struct {
+	ID        string         `gorm:"primaryKey;size:50" json:"id"`
+	FirstName string         `gorm:"size:80;not null" json:"firstName"`
+	LastName  string         `gorm:"size:80;not null" json:"lastName"`
+	Rating    int            `gorm:"not null" json:"rating"`
+	Comment   string         `gorm:"type:text" json:"comment,omitempty"`
+	CreatedAt time.Time      `json:"createdAt"`
+	UpdatedAt time.Time      `json:"updatedAt"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+func (RentFlowReview) TableName() string {
+	return "rentflow_reviews"
 }

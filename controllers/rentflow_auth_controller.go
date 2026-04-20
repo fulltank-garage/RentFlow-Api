@@ -35,14 +35,17 @@ func RentFlowAuthWithGoogle(c *gin.Context) {
 	}
 
 	email := strings.TrimSpace(strings.ToLower(payload.User.Email))
-	if payload.AccessToken == "" || email == "" || strings.TrimSpace(payload.User.Sub) == "" {
-		rentFlowError(c, http.StatusBadRequest, "ข้อมูล Google account ไม่ครบถ้วน")
+	googleSub := strings.TrimSpace(payload.User.Sub)
+	if payload.AccessToken == "" || email == "" || googleSub == "" {
+		rentFlowError(c, http.StatusBadRequest, "ข้อมูลบัญชี Google ไม่ครบถ้วน")
 		return
 	}
 
+	firstName := strings.TrimSpace(payload.User.GivenName)
+	lastName := strings.TrimSpace(payload.User.FamilyName)
 	name := strings.TrimSpace(payload.User.Name)
 	if name == "" {
-		name = strings.TrimSpace(strings.TrimSpace(payload.User.GivenName + " " + payload.User.FamilyName))
+		name = strings.TrimSpace(firstName + " " + lastName)
 	}
 	if name == "" {
 		name = email
@@ -59,7 +62,10 @@ func RentFlowAuthWithGoogle(c *gin.Context) {
 	if isNewUser {
 		user = models.RentFlowUser{
 			ID:        services.NewID("usr"),
-			GoogleSub: payload.User.Sub,
+			GoogleSub: &googleSub,
+			Username:  email,
+			FirstName: firstName,
+			LastName:  lastName,
 			Name:      name,
 			Email:     email,
 			AvatarURL: strings.TrimSpace(payload.User.Picture),
@@ -70,8 +76,11 @@ func RentFlowAuthWithGoogle(c *gin.Context) {
 		}
 	} else {
 		updates := map[string]interface{}{
+			"username":   email,
+			"first_name": firstName,
+			"last_name":  lastName,
 			"name":       name,
-			"google_sub": payload.User.Sub,
+			"google_sub": googleSub,
 			"avatar_url": strings.TrimSpace(payload.User.Picture),
 			"updated_at": time.Now(),
 		}
@@ -79,8 +88,11 @@ func RentFlowAuthWithGoogle(c *gin.Context) {
 			rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถอัปเดตข้อมูลผู้ใช้ได้")
 			return
 		}
+		user.Username = email
+		user.FirstName = firstName
+		user.LastName = lastName
 		user.Name = name
-		user.GoogleSub = payload.User.Sub
+		user.GoogleSub = &googleSub
 		user.AvatarURL = strings.TrimSpace(payload.User.Picture)
 	}
 
@@ -89,7 +101,7 @@ func RentFlowAuthWithGoogle(c *gin.Context) {
 		UserEmail: user.Email,
 	}, 7*24*time.Hour)
 	if err != nil {
-		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถสร้าง session ได้")
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถสร้างเซสชันได้")
 		return
 	}
 
@@ -107,6 +119,123 @@ func RentFlowAuthWithGoogle(c *gin.Context) {
 		_ = config.DB.Create(&notification).Error
 	}
 
+	rentFlowSuccess(c, http.StatusOK, "เข้าสู่ระบบสำเร็จ", gin.H{
+		"user": user,
+	})
+}
+
+func RentFlowRegister(c *gin.Context) {
+	var payload struct {
+		Username  string `json:"username"`
+		Password  string `json:"password"`
+		FirstName string `json:"firstName"`
+		LastName  string `json:"lastName"`
+		Name      string `json:"name"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		rentFlowError(c, http.StatusBadRequest, "ข้อมูลสมัครสมาชิกไม่ถูกต้อง")
+		return
+	}
+
+	username := strings.TrimSpace(strings.ToLower(payload.Username))
+	firstName := strings.TrimSpace(payload.FirstName)
+	lastName := strings.TrimSpace(payload.LastName)
+	name := strings.TrimSpace(payload.Name)
+	if name == "" {
+		name = strings.TrimSpace(firstName + " " + lastName)
+	}
+
+	if len(username) < 3 || len(payload.Password) < 8 || len(firstName) < 2 || len(lastName) < 2 {
+		rentFlowError(c, http.StatusBadRequest, "กรุณากรอกข้อมูลสมัครสมาชิกให้ครบถ้วน")
+		return
+	}
+
+	var existing models.RentFlowUser
+	err := config.DB.Where("username = ? OR email = ?", username, username).First(&existing).Error
+	if err == nil {
+		rentFlowError(c, http.StatusConflict, "ชื่อผู้ใช้นี้ถูกใช้งานแล้ว")
+		return
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถตรวจสอบข้อมูลผู้ใช้ได้")
+		return
+	}
+
+	hash, err := services.HashPasswordIfNeeded(payload.Password)
+	if err != nil {
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถสร้างบัญชีผู้ใช้ได้")
+		return
+	}
+
+	user := models.RentFlowUser{
+		ID:           services.NewID("usr"),
+		Username:     username,
+		FirstName:    firstName,
+		LastName:     lastName,
+		Name:         name,
+		Email:        username,
+		PasswordHash: hash,
+	}
+
+	if err := config.DB.Create(&user).Error; err != nil {
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถสร้างบัญชีผู้ใช้ได้")
+		return
+	}
+
+	sessionToken, err := services.CreateSession(config.Ctx, services.RentFlowSession{
+		UserID:    user.ID,
+		UserEmail: user.Email,
+	}, 7*24*time.Hour)
+	if err != nil {
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถสร้างเซสชันได้")
+		return
+	}
+
+	setRentFlowSessionCookie(c, sessionToken)
+	rentFlowCreateNotification(&user.ID, user.Email, "ยินดีต้อนรับสู่ RentFlow", "บัญชีของคุณพร้อมใช้งานแล้ว")
+
+	rentFlowSuccess(c, http.StatusCreated, "สมัครสมาชิกสำเร็จ", gin.H{
+		"user": user,
+	})
+}
+
+func RentFlowLogin(c *gin.Context) {
+	var payload struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		rentFlowError(c, http.StatusBadRequest, "ข้อมูลเข้าสู่ระบบไม่ถูกต้อง")
+		return
+	}
+
+	username := strings.TrimSpace(strings.ToLower(payload.Username))
+	if username == "" || payload.Password == "" {
+		rentFlowError(c, http.StatusBadRequest, "กรุณากรอกชื่อผู้ใช้และรหัสผ่าน")
+		return
+	}
+
+	var user models.RentFlowUser
+	if err := config.DB.Where("username = ? OR email = ?", username, username).First(&user).Error; err != nil {
+		rentFlowError(c, http.StatusUnauthorized, "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
+		return
+	}
+
+	if !services.CheckPassword(payload.Password, user.PasswordHash) {
+		rentFlowError(c, http.StatusUnauthorized, "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
+		return
+	}
+
+	sessionToken, err := services.CreateSession(config.Ctx, services.RentFlowSession{
+		UserID:    user.ID,
+		UserEmail: user.Email,
+	}, 7*24*time.Hour)
+	if err != nil {
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถสร้างเซสชันได้")
+		return
+	}
+
+	setRentFlowSessionCookie(c, sessionToken)
 	rentFlowSuccess(c, http.StatusOK, "เข้าสู่ระบบสำเร็จ", gin.H{
 		"user": user,
 	})

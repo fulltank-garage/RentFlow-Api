@@ -83,7 +83,7 @@ func CheckPassword(password, hash string) bool {
 func ParseDateTime(value string) (time.Time, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return time.Time{}, fmt.Errorf("missing datetime")
+		return time.Time{}, fmt.Errorf("ไม่พบวันและเวลา")
 	}
 
 	layouts := []string{
@@ -100,7 +100,7 @@ func ParseDateTime(value string) (time.Time, error) {
 		}
 	}
 
-	return time.Time{}, fmt.Errorf("invalid datetime format")
+	return time.Time{}, fmt.Errorf("รูปแบบวันและเวลาไม่ถูกต้อง")
 }
 
 func TotalDaysBetween(start, end time.Time) int {
@@ -250,12 +250,12 @@ func CacheSetJSON(ctx context.Context, key string, value interface{}, ttl time.D
 
 	payload, err := json.Marshal(value)
 	if err != nil {
-		log.Printf("cache marshal failed for %s: %v", key, err)
+		log.Printf("แปลงข้อมูลแคชไม่สำเร็จสำหรับ %s: %v", key, err)
 		return
 	}
 
 	if err := config.RDB.Set(ctx, key, payload, ttl).Err(); err != nil {
-		log.Printf("cache set failed for %s: %v", key, err)
+		log.Printf("บันทึกแคชไม่สำเร็จสำหรับ %s: %v", key, err)
 	}
 }
 

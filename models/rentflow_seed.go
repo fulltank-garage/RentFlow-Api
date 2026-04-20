@@ -9,7 +9,7 @@ import (
 
 func SeedRentFlowData(db *gorm.DB) error {
 	if db == nil {
-		return errors.New("database is nil")
+		return errors.New("ยังไม่ได้เชื่อมต่อฐานข้อมูล")
 	}
 
 	branches := []RentFlowBranch{
