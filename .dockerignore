@@ -1,0 +1,10 @@
+.git
+.gitignore
+.env
+tmp
+*.log
+*.out
+dist
+node_modules
+postgres_data
+redis_data
