@@ -36,8 +36,11 @@ func ConnectDatabase() {
 	DB = db
 
 	db.AutoMigrate(
-		&models.Role{},
-		&models.User{},
-		&models.RefreshToken{},
+		&models.RentFlowUser{},
+		&models.RentFlowBranch{},
+		&models.RentFlowCar{},
+		&models.RentFlowBooking{},
+		&models.RentFlowPayment{},
+		&models.RentFlowNotification{},
 	)
 }

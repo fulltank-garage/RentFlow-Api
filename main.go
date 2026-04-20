@@ -25,13 +25,8 @@ func main() {
 		log.Println("✅ Redis = CONNECTED")
 	}
 
-	if err := db.AutoMigrate(&models.Role{}, &models.User{}); err != nil {
-		log.Fatal("Migration failed: ", err)
-	}
-
-	roles := []string{"superadmin", "admin", "employee", "user"}
-	for _, r := range roles {
-		db.FirstOrCreate(&models.Role{}, models.Role{Name: r})
+	if err := models.SeedRentFlowData(db); err != nil {
+		log.Fatal("RentFlow seed failed: ", err)
 	}
 
 	gin.SetMode(gin.ReleaseMode)
