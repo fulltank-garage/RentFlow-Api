@@ -68,5 +68,5 @@ func isRentFlowSubdomainOrigin(origin string) bool {
 		rootDomain = "rentflow.com"
 	}
 
-	return parsed.Scheme == "https" && strings.HasSuffix(host, "."+rootDomain)
+	return parsed.Scheme == "https" && (host == rootDomain || strings.HasSuffix(host, "."+rootDomain))
 }

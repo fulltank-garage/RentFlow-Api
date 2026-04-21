@@ -11,14 +11,40 @@ import (
 )
 
 func RentFlowGetReviews(c *gin.Context) {
-	tenant, ok := rentFlowRequireTenant(c)
-	if !ok {
+	marketplace := rentFlowIsMarketplaceRequest(c)
+
+	tenantMap := make(map[string]models.RentFlowTenant)
+	tenantIDs := make([]string, 0)
+	if marketplace {
+		tenants, err := rentFlowMarketplaceTenants()
+		if err != nil {
+			rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถดึงข้อมูลร้านได้")
+			return
+		}
+		tenantMap = rentFlowTenantMap(tenants)
+		for _, tenant := range tenants {
+			tenantIDs = append(tenantIDs, tenant.ID)
+		}
+	} else {
+		tenant, ok := rentFlowRequireTenant(c)
+		if !ok {
+			return
+		}
+		tenantMap[tenant.ID] = *tenant
+		tenantIDs = append(tenantIDs, tenant.ID)
+	}
+
+	if len(tenantIDs) == 0 {
+		rentFlowSuccess(c, http.StatusOK, "ดึงรีวิวสำเร็จ", gin.H{
+			"items": []gin.H{},
+			"total": 0,
+		})
 		return
 	}
 
 	var reviews []models.RentFlowReview
 	if err := config.DB.
-		Where("tenant_id = ?", tenant.ID).
+		Where("tenant_id IN ?", tenantIDs).
 		Order("created_at DESC").
 		Limit(50).
 		Find(&reviews).Error; err != nil {
@@ -26,9 +52,27 @@ func RentFlowGetReviews(c *gin.Context) {
 		return
 	}
 
+	items := make([]gin.H, 0, len(reviews))
+	for _, review := range reviews {
+		tenant := tenantMap[review.TenantID]
+		items = append(items, gin.H{
+			"id":           review.ID,
+			"tenantId":     review.TenantID,
+			"firstName":    review.FirstName,
+			"lastName":     review.LastName,
+			"rating":       review.Rating,
+			"comment":      review.Comment,
+			"createdAt":    review.CreatedAt,
+			"updatedAt":    review.UpdatedAt,
+			"shopName":     tenant.ShopName,
+			"domainSlug":   tenant.DomainSlug,
+			"publicDomain": tenant.PublicDomain,
+		})
+	}
+
 	rentFlowSuccess(c, http.StatusOK, "ดึงรีวิวสำเร็จ", gin.H{
-		"items": reviews,
-		"total": len(reviews),
+		"items": items,
+		"total": len(items),
 	})
 }
 

@@ -31,6 +31,7 @@ func RegisterRentFlowRoutes(r *gin.Engine) {
 	r.GET("/payments/booking/:bookingId", controllers.RentFlowGetPaymentByBookingID)
 	r.GET("/reviews", controllers.RentFlowGetReviews)
 	r.POST("/reviews", controllers.RentFlowCreateReview)
+	r.POST("/ai/storefront-assistant", controllers.RentFlowStorefrontAssistant)
 
 	protected := r.Group("/")
 	protected.Use(middleware.RequireRentFlowSession())
@@ -44,6 +45,7 @@ func RegisterRentFlowRoutes(r *gin.Engine) {
 		protected.PUT("/tenants/me", controllers.RentFlowUpsertMyTenant)
 
 		protected.GET("/partner/dashboard", controllers.RentFlowPartnerDashboard)
+		protected.GET("/partner/ai/assistant", controllers.RentFlowPartnerAssistant)
 		protected.GET("/partner/reports", controllers.RentFlowPartnerGetReports)
 		protected.GET("/partner/cars", controllers.RentFlowPartnerGetCars)
 		protected.POST("/partner/cars", controllers.RentFlowPartnerCreateCar)
@@ -96,6 +98,7 @@ func RegisterRentFlowRoutes(r *gin.Engine) {
 		protected.POST("/partner/support/tickets/:ticketId/messages", controllers.RentFlowPartnerCreateSupportMessage)
 		protected.GET("/partner/audit-logs", controllers.RentFlowPartnerGetAuditLogs)
 		protected.GET("/platform/me", controllers.RentFlowAdminGetMe)
+		protected.GET("/platform/ai/assistant", controllers.RentFlowAdminAssistant)
 		protected.GET("/platform/overview", controllers.RentFlowAdminGetOverview)
 		protected.GET("/platform/partners", controllers.RentFlowAdminListPartners)
 		protected.GET("/platform/domains", controllers.RentFlowAdminListDomains)

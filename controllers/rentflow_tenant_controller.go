@@ -208,6 +208,40 @@ func rentFlowTenantFromRequest(c *gin.Context, allowDefault bool) (*models.RentF
 	return &tenant, nil
 }
 
+func rentFlowIsMarketplaceRequest(c *gin.Context) bool {
+	for _, value := range []string{
+		c.Query("marketplace"),
+		c.GetHeader("X-RentFlow-Marketplace"),
+	} {
+		switch strings.TrimSpace(strings.ToLower(value)) {
+		case "1", "true", "yes", "on":
+			return true
+		}
+	}
+
+	host := rentFlowNormalizeTenantHost(rentFlowTenantIdentityFromRequest(c))
+	return host != "" && host == rentFlowRootDomain()
+}
+
+func rentFlowMarketplaceTenants() ([]models.RentFlowTenant, error) {
+	var tenants []models.RentFlowTenant
+	if err := config.DB.
+		Where("status = ?", "active").
+		Order("shop_name ASC").
+		Find(&tenants).Error; err != nil {
+		return nil, err
+	}
+	return tenants, nil
+}
+
+func rentFlowTenantMap(tenants []models.RentFlowTenant) map[string]models.RentFlowTenant {
+	items := make(map[string]models.RentFlowTenant, len(tenants))
+	for _, tenant := range tenants {
+		items[tenant.ID] = tenant
+	}
+	return items
+}
+
 func rentFlowCurrentUserTenant(c *gin.Context) (*models.RentFlowTenant, error) {
 	user, ok := middleware.CurrentRentFlowUser(c)
 	if !ok {
