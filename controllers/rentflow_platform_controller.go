@@ -11,6 +11,7 @@ import (
 	"rentflow-api/config"
 	"rentflow-api/middleware"
 	"rentflow-api/models"
+	"rentflow-api/services"
 )
 
 type rentFlowPlatformTenantItem struct {
@@ -216,12 +217,11 @@ func RentFlowAdminGetSecurity(c *gin.Context) {
 		return
 	}
 
-	adminEmail := strings.TrimSpace(strings.ToLower(os.Getenv("RENTFLOW_SUPER_ADMIN_EMAIL")))
 	policies := []gin.H{
 		{
 			"title":  "Platform admin",
 			"detail": "ใช้บัญชีผู้ดูแลระบบกลางเพียงบัญชีเดียวในการควบคุม tenant และสถานะระบบ",
-			"status": map[bool]string{true: "configured", false: "missing"}[adminEmail != ""],
+			"status": map[bool]string{true: "configured", false: "missing"}[services.RentFlowPlatformAdminConfigured()],
 		},
 		{
 			"title":  "Tenant isolation",
@@ -237,7 +237,7 @@ func RentFlowAdminGetSecurity(c *gin.Context) {
 
 	rentFlowSuccess(c, http.StatusOK, "ดึงข้อมูลความปลอดภัยสำเร็จ", gin.H{
 		"summary": gin.H{
-			"platformAdminConfigured": adminEmail != "",
+			"platformAdminConfigured": services.RentFlowPlatformAdminConfigured(),
 			"tenantOwners":            len(tenantItems),
 			"tenantMembers":           len(members),
 			"connectedLineChannels":   len(lineChannels),

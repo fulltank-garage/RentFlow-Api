@@ -3,7 +3,6 @@ package controllers
 import (
 	"errors"
 	"net/http"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -572,8 +571,7 @@ func rentFlowRequirePlatformAdmin(c *gin.Context) bool {
 		rentFlowError(c, http.StatusUnauthorized, "กรุณาเข้าสู่ระบบก่อน")
 		return false
 	}
-	adminEmail := strings.TrimSpace(strings.ToLower(os.Getenv("RENTFLOW_SUPER_ADMIN_EMAIL")))
-	if adminEmail == "" || strings.ToLower(user.Email) != adminEmail {
+	if !services.IsRentFlowPlatformAdmin(user) {
 		rentFlowError(c, http.StatusForbidden, "ไม่มีสิทธิ์จัดการระบบกลาง")
 		return false
 	}

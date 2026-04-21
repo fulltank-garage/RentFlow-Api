@@ -30,6 +30,7 @@ func main() {
 	if err := models.SeedRentFlowData(db); err != nil {
 		log.Fatal("เตรียมข้อมูลเริ่มต้นของ RentFlow ไม่สำเร็จ: ", err)
 	}
+	services.EnsureRentFlowPlatformAdmin()
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
 
 	gin.SetMode(gin.ReleaseMode)
