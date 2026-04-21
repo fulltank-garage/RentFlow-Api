@@ -197,7 +197,7 @@ func RentFlowRegister(c *gin.Context) {
 	}
 
 	setRentFlowSessionCookie(c, sessionToken)
-	rentFlowCreateNotification(&user.ID, user.Email, "ยินดีต้อนรับสู่ RentFlow", "บัญชีของคุณพร้อมใช้งานแล้ว")
+	rentFlowCreateNotification("", &user.ID, user.Email, "ยินดีต้อนรับสู่ RentFlow", "บัญชีของคุณพร้อมใช้งานแล้ว")
 
 	rentFlowSuccess(c, http.StatusCreated, "สมัครสมาชิกสำเร็จ", gin.H{
 		"user": user,

@@ -296,6 +296,10 @@ func RentFlowCarsCachePrefix() string {
 	return rentFlowCachePrefix + "cars"
 }
 
+func RentFlowBranchesCachePrefix() string {
+	return rentFlowCachePrefix + "branches"
+}
+
 func ExpandDateRange(start, end time.Time) []string {
 	if end.Before(start) {
 		return nil

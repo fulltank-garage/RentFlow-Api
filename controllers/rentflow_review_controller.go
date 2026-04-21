@@ -11,8 +11,14 @@ import (
 )
 
 func RentFlowGetReviews(c *gin.Context) {
+	tenant, ok := rentFlowRequireTenant(c)
+	if !ok {
+		return
+	}
+
 	var reviews []models.RentFlowReview
 	if err := config.DB.
+		Where("tenant_id = ?", tenant.ID).
 		Order("created_at DESC").
 		Limit(50).
 		Find(&reviews).Error; err != nil {
@@ -27,6 +33,11 @@ func RentFlowGetReviews(c *gin.Context) {
 }
 
 func RentFlowCreateReview(c *gin.Context) {
+	tenant, ok := rentFlowRequireTenant(c)
+	if !ok {
+		return
+	}
+
 	var payload struct {
 		FirstName string `json:"firstName"`
 		LastName  string `json:"lastName"`
@@ -59,6 +70,7 @@ func RentFlowCreateReview(c *gin.Context) {
 
 	review := models.RentFlowReview{
 		ID:        services.NewID("rev"),
+		TenantID:  tenant.ID,
 		FirstName: firstName,
 		LastName:  lastName,
 		Rating:    payload.Rating,

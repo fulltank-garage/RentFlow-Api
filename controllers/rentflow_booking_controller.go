@@ -14,6 +14,11 @@ import (
 )
 
 func RentFlowPreviewBookingPrice(c *gin.Context) {
+	tenant, ok := rentFlowRequireTenant(c)
+	if !ok {
+		return
+	}
+
 	var payload struct {
 		CarID          string `json:"carId"`
 		PickupDate     string `json:"pickupDate"`
@@ -26,7 +31,7 @@ func RentFlowPreviewBookingPrice(c *gin.Context) {
 		return
 	}
 
-	car, pickupDate, returnDate, ok := rentFlowValidateBookingDatesAndCar(c, payload.CarID, payload.PickupDate, payload.ReturnDate)
+	car, pickupDate, returnDate, ok := rentFlowValidateBookingDatesAndCar(c, tenant.ID, payload.CarID, payload.PickupDate, payload.ReturnDate)
 	if !ok {
 		return
 	}
@@ -50,6 +55,11 @@ func RentFlowPreviewBookingPrice(c *gin.Context) {
 }
 
 func RentFlowCreateBooking(c *gin.Context) {
+	tenant, ok := rentFlowRequireTenant(c)
+	if !ok {
+		return
+	}
+
 	var payload struct {
 		CarID          string `json:"carId"`
 		PickupDate     string `json:"pickupDate"`
@@ -74,12 +84,12 @@ func RentFlowCreateBooking(c *gin.Context) {
 		return
 	}
 
-	car, pickupDate, returnDate, ok := rentFlowValidateBookingDatesAndCar(c, payload.CarID, payload.PickupDate, payload.ReturnDate)
+	car, pickupDate, returnDate, ok := rentFlowValidateBookingDatesAndCar(c, tenant.ID, payload.CarID, payload.PickupDate, payload.ReturnDate)
 	if !ok {
 		return
 	}
 
-	available, err := rentFlowCarIsAvailable(car.ID, pickupDate, returnDate)
+	available, err := rentFlowCarIsAvailable(tenant.ID, car.ID, pickupDate, returnDate)
 	if err != nil {
 		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถตรวจสอบคิวรถได้")
 		return
@@ -105,6 +115,7 @@ func RentFlowCreateBooking(c *gin.Context) {
 
 	booking := models.RentFlowBooking{
 		ID:             services.NewID("bok"),
+		TenantID:       tenant.ID,
 		BookingCode:    services.NewBookingCode(),
 		CarID:          car.ID,
 		Status:         "pending",
@@ -133,7 +144,7 @@ func RentFlowCreateBooking(c *gin.Context) {
 	}
 
 	if booking.UserEmail != "" {
-		rentFlowCreateNotification(booking.UserID, booking.UserEmail, "สร้างการจองใหม่", "การจอง "+booking.BookingCode+" ถูกสร้างเรียบร้อยแล้ว")
+		rentFlowCreateNotification(tenant.ID, booking.UserID, booking.UserEmail, "สร้างการจองใหม่", "การจอง "+booking.BookingCode+" ถูกสร้างเรียบร้อยแล้ว")
 	}
 
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
@@ -193,12 +204,17 @@ func RentFlowCancelBooking(c *gin.Context) {
 	}
 
 	booking.Status = "cancelled"
-	rentFlowCreateNotification(booking.UserID, booking.CustomerEmail, "ยกเลิกการจอง", "การจอง "+booking.BookingCode+" ถูกยกเลิกแล้ว")
+	rentFlowCreateNotification(booking.TenantID, booking.UserID, booking.CustomerEmail, "ยกเลิกการจอง", "การจอง "+booking.BookingCode+" ถูกยกเลิกแล้ว")
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
 	rentFlowSuccess(c, http.StatusOK, "ยกเลิกรายการจองสำเร็จ", booking)
 }
 
 func RentFlowCreatePayment(c *gin.Context) {
+	tenant, ok := rentFlowRequireTenant(c)
+	if !ok {
+		return
+	}
+
 	var payload struct {
 		BookingID string `json:"bookingId"`
 		Method    string `json:"method"`
@@ -209,7 +225,7 @@ func RentFlowCreatePayment(c *gin.Context) {
 	}
 
 	var booking models.RentFlowBooking
-	if err := config.DB.Where("id = ? OR booking_code = ?", payload.BookingID, payload.BookingID).First(&booking).Error; err != nil {
+	if err := config.DB.Where("tenant_id = ? AND (id = ? OR booking_code = ?)", tenant.ID, payload.BookingID, payload.BookingID).First(&booking).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			rentFlowError(c, http.StatusNotFound, "ไม่พบรายการจองที่ต้องการชำระเงิน")
 			return
@@ -228,6 +244,7 @@ func RentFlowCreatePayment(c *gin.Context) {
 
 	payment := models.RentFlowPayment{
 		ID:            services.NewID("pay"),
+		TenantID:      tenant.ID,
 		BookingID:     booking.ID,
 		Method:        method,
 		Status:        "paid",
@@ -256,13 +273,18 @@ func RentFlowCreatePayment(c *gin.Context) {
 		return
 	}
 
-	rentFlowCreateNotification(booking.UserID, booking.CustomerEmail, "ชำระเงินสำเร็จ", "การจอง "+booking.BookingCode+" ชำระเงินเรียบร้อยแล้ว")
+	rentFlowCreateNotification(tenant.ID, booking.UserID, booking.CustomerEmail, "ชำระเงินสำเร็จ", "การจอง "+booking.BookingCode+" ชำระเงินเรียบร้อยแล้ว")
 	rentFlowSuccess(c, http.StatusCreated, "สร้างรายการชำระเงินสำเร็จ", payment)
 }
 
 func RentFlowGetPaymentByBookingID(c *gin.Context) {
+	tenant, ok := rentFlowRequireTenant(c)
+	if !ok {
+		return
+	}
+
 	var payment models.RentFlowPayment
-	if err := config.DB.Where("booking_id = ?", c.Param("bookingId")).Order("created_at DESC").First(&payment).Error; err != nil {
+	if err := config.DB.Where("tenant_id = ? AND booking_id = ?", tenant.ID, c.Param("bookingId")).Order("created_at DESC").First(&payment).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			rentFlowError(c, http.StatusNotFound, "ยังไม่มีข้อมูลการชำระเงินสำหรับการจองนี้")
 			return
@@ -335,9 +357,9 @@ func RentFlowMarkAllNotificationsAsRead(c *gin.Context) {
 	rentFlowSuccess(c, http.StatusOK, "อัปเดตการแจ้งเตือนทั้งหมดสำเร็จ", nil)
 }
 
-func rentFlowValidateBookingDatesAndCar(c *gin.Context, carID, pickupDateRaw, returnDateRaw string) (models.RentFlowCar, time.Time, time.Time, bool) {
+func rentFlowValidateBookingDatesAndCar(c *gin.Context, tenantID, carID, pickupDateRaw, returnDateRaw string) (models.RentFlowCar, time.Time, time.Time, bool) {
 	var car models.RentFlowCar
-	if err := config.DB.Where("id = ? AND is_available = ?", carID, true).First(&car).Error; err != nil {
+	if err := config.DB.Where("tenant_id = ? AND id = ? AND is_available = ? AND status = ?", tenantID, carID, true, "available").First(&car).Error; err != nil {
 		rentFlowError(c, http.StatusNotFound, "ไม่พบรถที่ต้องการ")
 		return models.RentFlowCar{}, time.Time{}, time.Time{}, false
 	}
@@ -390,12 +412,13 @@ func rentFlowLoadOwnedBooking(c *gin.Context, bookingID string) (*models.RentFlo
 	return &booking, true
 }
 
-func rentFlowCreateNotification(userID *string, userEmail, title, message string) {
+func rentFlowCreateNotification(tenantID string, userID *string, userEmail, title, message string) {
 	if strings.TrimSpace(userEmail) == "" {
 		return
 	}
 	notification := models.RentFlowNotification{
 		ID:        services.NewID("ntf"),
+		TenantID:  tenantID,
 		UserID:    userID,
 		UserEmail: strings.TrimSpace(strings.ToLower(userEmail)),
 		Title:     title,
@@ -403,4 +426,13 @@ func rentFlowCreateNotification(userID *string, userEmail, title, message string
 		IsRead:    false,
 	}
 	_ = config.DB.Create(&notification).Error
+	_ = config.DB.Create(&models.RentFlowMessageLog{
+		ID:        services.NewID("msg"),
+		TenantID:  tenantID,
+		Channel:   "email",
+		Recipient: strings.TrimSpace(strings.ToLower(userEmail)),
+		Subject:   title,
+		Body:      message,
+		Status:    "queued",
+	}).Error
 }

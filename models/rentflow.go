@@ -26,19 +26,43 @@ func (RentFlowUser) TableName() string {
 	return "rentflow_users"
 }
 
+type RentFlowTenant struct {
+	ID           string         `gorm:"primaryKey;size:50" json:"id"`
+	OwnerUserID  *string        `gorm:"size:40;index" json:"ownerUserId,omitempty"`
+	OwnerEmail   string         `gorm:"size:150;index;not null" json:"ownerEmail"`
+	ShopName     string         `gorm:"size:150;not null" json:"shopName"`
+	DomainSlug   string         `gorm:"size:80;uniqueIndex;not null" json:"domainSlug"`
+	PublicDomain string         `gorm:"size:160;uniqueIndex;not null" json:"publicDomain"`
+	Status       string         `gorm:"size:30;index;not null;default:active" json:"status"`
+	Plan         string         `gorm:"size:40;not null;default:starter" json:"plan"`
+	CreatedAt    time.Time      `json:"createdAt"`
+	UpdatedAt    time.Time      `json:"updatedAt"`
+	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+func (RentFlowTenant) TableName() string {
+	return "rentflow_tenants"
+}
+
 type RentFlowBranch struct {
-	ID         string    `gorm:"primaryKey;size:60" json:"id"`
-	Name       string    `gorm:"size:150;not null" json:"name"`
-	Address    string    `gorm:"size:255;not null" json:"address"`
-	Phone      string    `gorm:"size:30" json:"phone,omitempty"`
-	LocationID string    `gorm:"size:40;index;not null" json:"locationId,omitempty"`
-	Lat        float64   `json:"lat,omitempty"`
-	Lng        float64   `json:"lng,omitempty"`
-	OpenTime   string    `gorm:"size:10" json:"openTime,omitempty"`
-	CloseTime  string    `gorm:"size:10" json:"closeTime,omitempty"`
-	IsActive   bool      `gorm:"default:true" json:"isActive"`
-	CreatedAt  time.Time `json:"createdAt"`
-	UpdatedAt  time.Time `json:"updatedAt"`
+	ID              string    `gorm:"primaryKey;size:60" json:"id"`
+	TenantID        string    `gorm:"size:50;index" json:"tenantId,omitempty"`
+	Name            string    `gorm:"size:150;not null" json:"name"`
+	Address         string    `gorm:"size:255;not null" json:"address"`
+	Phone           string    `gorm:"size:30" json:"phone,omitempty"`
+	LocationID      string    `gorm:"size:40;index;not null" json:"locationId,omitempty"`
+	Type            string    `gorm:"size:30;index;default:storefront" json:"type,omitempty"`
+	DisplayOrder    int       `gorm:"index;default:1" json:"displayOrder"`
+	Lat             float64   `json:"lat,omitempty"`
+	Lng             float64   `json:"lng,omitempty"`
+	OpenTime        string    `gorm:"size:10" json:"openTime,omitempty"`
+	CloseTime       string    `gorm:"size:10" json:"closeTime,omitempty"`
+	PickupAvailable bool      `gorm:"default:true" json:"pickupAvailable"`
+	ReturnAvailable bool      `gorm:"default:true" json:"returnAvailable"`
+	ExtraFee        int64     `gorm:"default:0" json:"extraFee"`
+	IsActive        bool      `gorm:"default:true" json:"isActive"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
 func (RentFlowBranch) TableName() string {
@@ -47,6 +71,7 @@ func (RentFlowBranch) TableName() string {
 
 type RentFlowCar struct {
 	ID           string         `gorm:"primaryKey;size:80" json:"id"`
+	TenantID     string         `gorm:"size:50;index" json:"tenantId,omitempty"`
 	Name         string         `gorm:"size:150;not null" json:"name"`
 	Brand        string         `gorm:"size:80;not null" json:"brand"`
 	Model        string         `gorm:"size:120;not null" json:"model"`
@@ -58,6 +83,7 @@ type RentFlowCar struct {
 	PricePerDay  int64          `gorm:"not null" json:"pricePerDay"`
 	Description  string         `gorm:"type:text" json:"description,omitempty"`
 	LocationID   string         `gorm:"size:40;index;not null" json:"locationId,omitempty"`
+	Status       string         `gorm:"size:20;index;default:available" json:"status"`
 	IsAvailable  bool           `gorm:"default:true" json:"isAvailable"`
 	CreatedAt    time.Time      `json:"createdAt"`
 	UpdatedAt    time.Time      `json:"updatedAt"`
@@ -70,6 +96,7 @@ func (RentFlowCar) TableName() string {
 
 type RentFlowCarImage struct {
 	ID        string    `gorm:"primaryKey;size:120" json:"id"`
+	TenantID  string    `gorm:"size:50;index" json:"tenantId,omitempty"`
 	CarID     string    `gorm:"size:80;index;not null" json:"carId"`
 	SortOrder int       `gorm:"index;not null;default:0" json:"sortOrder"`
 	FileName  string    `gorm:"size:160" json:"fileName,omitempty"`
@@ -85,6 +112,7 @@ func (RentFlowCarImage) TableName() string {
 
 type RentFlowBooking struct {
 	ID             string         `gorm:"primaryKey;size:50" json:"id"`
+	TenantID       string         `gorm:"size:50;index" json:"tenantId,omitempty"`
 	BookingCode    string         `gorm:"size:30;uniqueIndex;not null" json:"bookingCode"`
 	UserID         *string        `gorm:"size:40;index" json:"userId,omitempty"`
 	UserEmail      string         `gorm:"size:150;index" json:"-"`
@@ -116,6 +144,7 @@ func (RentFlowBooking) TableName() string {
 
 type RentFlowPayment struct {
 	ID            string         `gorm:"primaryKey;size:50" json:"id"`
+	TenantID      string         `gorm:"size:50;index" json:"tenantId,omitempty"`
 	BookingID     string         `gorm:"size:50;index;not null" json:"bookingId"`
 	Method        string         `gorm:"size:30;not null" json:"method"`
 	Status        string         `gorm:"size:20;index;not null" json:"status"`
@@ -123,6 +152,13 @@ type RentFlowPayment struct {
 	TransactionID string         `gorm:"size:120" json:"transactionId,omitempty"`
 	PaymentURL    string         `gorm:"size:500" json:"paymentUrl,omitempty"`
 	QRCodeURL     string         `gorm:"size:500" json:"qrCodeUrl,omitempty"`
+	SlipURL       string         `gorm:"size:500" json:"slipUrl,omitempty"`
+	VerifiedBy    string         `gorm:"size:50" json:"verifiedBy,omitempty"`
+	VerifiedAt    *time.Time     `json:"verifiedAt,omitempty"`
+	RefundStatus  string         `gorm:"size:30;index;default:none" json:"refundStatus,omitempty"`
+	RefundAmount  int64          `gorm:"default:0" json:"refundAmount,omitempty"`
+	PayoutStatus  string         `gorm:"size:30;index;default:pending" json:"payoutStatus,omitempty"`
+	SettledAt     *time.Time     `json:"settledAt,omitempty"`
 	CreatedAt     time.Time      `json:"createdAt"`
 	UpdatedAt     time.Time      `json:"updatedAt"`
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
@@ -134,6 +170,7 @@ func (RentFlowPayment) TableName() string {
 
 type RentFlowNotification struct {
 	ID        string    `gorm:"primaryKey;size:50" json:"id"`
+	TenantID  string    `gorm:"size:50;index" json:"tenantId,omitempty"`
 	UserID    *string   `gorm:"size:40;index" json:"-"`
 	UserEmail string    `gorm:"size:150;index;not null" json:"-"`
 	Title     string    `gorm:"size:180;not null" json:"title"`
@@ -147,8 +184,27 @@ func (RentFlowNotification) TableName() string {
 	return "rentflow_notifications"
 }
 
+type RentFlowMessageLog struct {
+	ID           string    `gorm:"primaryKey;size:50" json:"id"`
+	TenantID     string    `gorm:"size:50;index" json:"tenantId,omitempty"`
+	Channel      string    `gorm:"size:30;index;not null" json:"channel"`
+	Recipient    string    `gorm:"size:180;index;not null" json:"recipient"`
+	Subject      string    `gorm:"size:180" json:"subject,omitempty"`
+	Body         string    `gorm:"type:text" json:"body,omitempty"`
+	Status       string    `gorm:"size:30;index;not null;default:queued" json:"status"`
+	ProviderRef  string    `gorm:"size:160" json:"providerRef,omitempty"`
+	ErrorMessage string    `gorm:"type:text" json:"errorMessage,omitempty"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+}
+
+func (RentFlowMessageLog) TableName() string {
+	return "rentflow_message_logs"
+}
+
 type RentFlowReview struct {
 	ID        string         `gorm:"primaryKey;size:50" json:"id"`
+	TenantID  string         `gorm:"size:50;index" json:"tenantId,omitempty"`
 	FirstName string         `gorm:"size:80;not null" json:"firstName"`
 	LastName  string         `gorm:"size:80;not null" json:"lastName"`
 	Rating    int            `gorm:"not null" json:"rating"`
@@ -160,4 +216,196 @@ type RentFlowReview struct {
 
 func (RentFlowReview) TableName() string {
 	return "rentflow_reviews"
+}
+
+type RentFlowTenantMember struct {
+	ID        string         `gorm:"primaryKey;size:50" json:"id"`
+	TenantID  string         `gorm:"size:50;index;not null" json:"tenantId"`
+	UserID    string         `gorm:"size:40;index" json:"userId,omitempty"`
+	Email     string         `gorm:"size:150;index;not null" json:"email"`
+	Name      string         `gorm:"size:150" json:"name,omitempty"`
+	Role      string         `gorm:"size:30;index;not null;default:staff" json:"role"`
+	Status    string         `gorm:"size:30;index;not null;default:active" json:"status"`
+	CreatedAt time.Time      `json:"createdAt"`
+	UpdatedAt time.Time      `json:"updatedAt"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+func (RentFlowTenantMember) TableName() string {
+	return "rentflow_tenant_members"
+}
+
+type RentFlowCustomDomain struct {
+	ID              string         `gorm:"primaryKey;size:50" json:"id"`
+	TenantID        string         `gorm:"size:50;index;not null" json:"tenantId"`
+	Domain          string         `gorm:"size:180;uniqueIndex;not null" json:"domain"`
+	Status          string         `gorm:"size:30;index;not null;default:pending" json:"status"`
+	VerificationTXT string         `gorm:"size:180" json:"verificationTxt,omitempty"`
+	VerifiedAt      *time.Time     `json:"verifiedAt,omitempty"`
+	CreatedAt       time.Time      `json:"createdAt"`
+	UpdatedAt       time.Time      `json:"updatedAt"`
+	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+func (RentFlowCustomDomain) TableName() string {
+	return "rentflow_custom_domains"
+}
+
+type RentFlowAuditLog struct {
+	ID         string    `gorm:"primaryKey;size:50" json:"id"`
+	TenantID   string    `gorm:"size:50;index" json:"tenantId,omitempty"`
+	ActorID    string    `gorm:"size:50;index" json:"actorId,omitempty"`
+	ActorEmail string    `gorm:"size:150;index" json:"actorEmail,omitempty"`
+	Action     string    `gorm:"size:120;index;not null" json:"action"`
+	Entity     string    `gorm:"size:80;index" json:"entity,omitempty"`
+	EntityID   string    `gorm:"size:80;index" json:"entityId,omitempty"`
+	Detail     string    `gorm:"type:text" json:"detail,omitempty"`
+	IP         string    `gorm:"size:80" json:"ip,omitempty"`
+	UserAgent  string    `gorm:"size:500" json:"userAgent,omitempty"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
+func (RentFlowAuditLog) TableName() string {
+	return "rentflow_audit_logs"
+}
+
+type RentFlowAvailabilityBlock struct {
+	ID        string         `gorm:"primaryKey;size:50" json:"id"`
+	TenantID  string         `gorm:"size:50;index;not null" json:"tenantId"`
+	CarID     string         `gorm:"size:80;index" json:"carId,omitempty"`
+	BranchID  string         `gorm:"size:60;index" json:"branchId,omitempty"`
+	StartDate time.Time      `gorm:"type:timestamp;index;not null" json:"startDate"`
+	EndDate   time.Time      `gorm:"type:timestamp;index;not null" json:"endDate"`
+	Reason    string         `gorm:"size:120;not null" json:"reason"`
+	Note      string         `gorm:"type:text" json:"note,omitempty"`
+	CreatedAt time.Time      `json:"createdAt"`
+	UpdatedAt time.Time      `json:"updatedAt"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+func (RentFlowAvailabilityBlock) TableName() string {
+	return "rentflow_availability_blocks"
+}
+
+type RentFlowPromotion struct {
+	ID            string         `gorm:"primaryKey;size:50" json:"id"`
+	TenantID      string         `gorm:"size:50;index;not null" json:"tenantId"`
+	Code          string         `gorm:"size:60;index;not null" json:"code"`
+	Name          string         `gorm:"size:150;not null" json:"name"`
+	Description   string         `gorm:"type:text" json:"description,omitempty"`
+	DiscountType  string         `gorm:"size:20;not null;default:percent" json:"discountType"`
+	DiscountValue int64          `gorm:"not null;default:0" json:"discountValue"`
+	StartsAt      *time.Time     `json:"startsAt,omitempty"`
+	EndsAt        *time.Time     `json:"endsAt,omitempty"`
+	IsActive      bool           `gorm:"default:true" json:"isActive"`
+	CreatedAt     time.Time      `json:"createdAt"`
+	UpdatedAt     time.Time      `json:"updatedAt"`
+	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+func (RentFlowPromotion) TableName() string {
+	return "rentflow_promotions"
+}
+
+type RentFlowAddon struct {
+	ID          string         `gorm:"primaryKey;size:50" json:"id"`
+	TenantID    string         `gorm:"size:50;index;not null" json:"tenantId"`
+	Name        string         `gorm:"size:150;not null" json:"name"`
+	Description string         `gorm:"type:text" json:"description,omitempty"`
+	Price       int64          `gorm:"not null;default:0" json:"price"`
+	Unit        string         `gorm:"size:30;not null;default:day" json:"unit"`
+	IsActive    bool           `gorm:"default:true" json:"isActive"`
+	CreatedAt   time.Time      `json:"createdAt"`
+	UpdatedAt   time.Time      `json:"updatedAt"`
+	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+func (RentFlowAddon) TableName() string {
+	return "rentflow_addons"
+}
+
+type RentFlowLead struct {
+	ID            string         `gorm:"primaryKey;size:50" json:"id"`
+	TenantID      string         `gorm:"size:50;index;not null" json:"tenantId"`
+	Name          string         `gorm:"size:150;not null" json:"name"`
+	Email         string         `gorm:"size:150;index" json:"email,omitempty"`
+	Phone         string         `gorm:"size:40;index" json:"phone,omitempty"`
+	Source        string         `gorm:"size:80;index" json:"source,omitempty"`
+	Status        string         `gorm:"size:30;index;not null;default:new" json:"status"`
+	InterestedCar string         `gorm:"size:120" json:"interestedCar,omitempty"`
+	Note          string         `gorm:"type:text" json:"note,omitempty"`
+	CreatedAt     time.Time      `json:"createdAt"`
+	UpdatedAt     time.Time      `json:"updatedAt"`
+	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+func (RentFlowLead) TableName() string {
+	return "rentflow_leads"
+}
+
+type RentFlowLineChannel struct {
+	ID                    string         `gorm:"primaryKey;size:50" json:"id"`
+	TenantID              string         `gorm:"size:50;uniqueIndex;not null" json:"tenantId"`
+	ChannelID             string         `gorm:"size:120;not null" json:"channelId"`
+	ChannelSecret         string         `gorm:"type:text;not null" json:"-"`
+	AccessToken           string         `gorm:"type:text;not null" json:"-"`
+	DisplayName           string         `gorm:"size:180" json:"displayName,omitempty"`
+	BasicID               string         `gorm:"size:120" json:"basicId,omitempty"`
+	BotUserID             string         `gorm:"size:120" json:"botUserId,omitempty"`
+	PictureURL            string         `gorm:"size:500" json:"pictureUrl,omitempty"`
+	WebhookURL            string         `gorm:"size:500" json:"webhookUrl,omitempty"`
+	Status                string         `gorm:"size:30;index;not null;default:draft" json:"status"`
+	LastVerifiedAt        *time.Time     `json:"lastVerifiedAt,omitempty"`
+	LastWebhookTestAt     *time.Time     `json:"lastWebhookTestAt,omitempty"`
+	LastWebhookTestStatus string         `gorm:"size:30" json:"lastWebhookTestStatus,omitempty"`
+	LastError             string         `gorm:"type:text" json:"lastError,omitempty"`
+	CreatedAt             time.Time      `json:"createdAt"`
+	UpdatedAt             time.Time      `json:"updatedAt"`
+	DeletedAt             gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+func (RentFlowLineChannel) TableName() string {
+	return "rentflow_line_channels"
+}
+
+type RentFlowSupportTicket struct {
+	ID               string         `gorm:"primaryKey;size:50" json:"id"`
+	TenantID         string         `gorm:"size:50;index;not null" json:"tenantId"`
+	Channel          string         `gorm:"size:30;index:idx_rentflow_support_thread,unique;not null" json:"channel"`
+	ExternalThreadID string         `gorm:"size:160;index:idx_rentflow_support_thread,unique" json:"externalThreadId,omitempty"`
+	Subject          string         `gorm:"size:180;not null" json:"subject"`
+	CustomerName     string         `gorm:"size:150" json:"customerName,omitempty"`
+	CustomerPhone    string         `gorm:"size:40;index" json:"customerPhone,omitempty"`
+	CustomerEmail    string         `gorm:"size:150;index" json:"customerEmail,omitempty"`
+	Status           string         `gorm:"size:30;index;not null;default:new" json:"status"`
+	Priority         string         `gorm:"size:30;index;not null;default:normal" json:"priority"`
+	OwnerEmail       string         `gorm:"size:150;index" json:"ownerEmail,omitempty"`
+	BookingID        string         `gorm:"size:50;index" json:"bookingId,omitempty"`
+	LastMessage      string         `gorm:"type:text" json:"lastMessage,omitempty"`
+	LastMessageAt    *time.Time     `json:"lastMessageAt,omitempty"`
+	CreatedAt        time.Time      `json:"createdAt"`
+	UpdatedAt        time.Time      `json:"updatedAt"`
+	DeletedAt        gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+func (RentFlowSupportTicket) TableName() string {
+	return "rentflow_support_tickets"
+}
+
+type RentFlowSupportMessage struct {
+	ID          string         `gorm:"primaryKey;size:50" json:"id"`
+	TenantID    string         `gorm:"size:50;index;not null" json:"tenantId"`
+	TicketID    string         `gorm:"size:50;index;not null" json:"ticketId"`
+	FromType    string         `gorm:"size:20;index;not null" json:"fromType"`
+	Message     string         `gorm:"type:text;not null" json:"message"`
+	IsInternal  bool           `gorm:"default:false" json:"isInternal"`
+	Status      string         `gorm:"size:30;index;not null;default:logged" json:"status"`
+	ProviderRef string         `gorm:"size:160;index" json:"providerRef,omitempty"`
+	CreatedAt   time.Time      `json:"createdAt"`
+	UpdatedAt   time.Time      `json:"updatedAt"`
+	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+func (RentFlowSupportMessage) TableName() string {
+	return "rentflow_support_messages"
 }

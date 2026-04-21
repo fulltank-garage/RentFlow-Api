@@ -37,12 +37,24 @@ func ConnectDatabase() {
 
 	db.AutoMigrate(
 		&models.RentFlowUser{},
+		&models.RentFlowTenant{},
 		&models.RentFlowBranch{},
 		&models.RentFlowCar{},
 		&models.RentFlowCarImage{},
 		&models.RentFlowBooking{},
 		&models.RentFlowPayment{},
 		&models.RentFlowNotification{},
+		&models.RentFlowMessageLog{},
 		&models.RentFlowReview{},
+		&models.RentFlowTenantMember{},
+		&models.RentFlowCustomDomain{},
+		&models.RentFlowAuditLog{},
+		&models.RentFlowAvailabilityBlock{},
+		&models.RentFlowPromotion{},
+		&models.RentFlowAddon{},
+		&models.RentFlowLead{},
+		&models.RentFlowLineChannel{},
+		&models.RentFlowSupportTicket{},
+		&models.RentFlowSupportMessage{},
 	)
 }

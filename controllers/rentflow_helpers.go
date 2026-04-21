@@ -34,13 +34,14 @@ func rentFlowError(c *gin.Context, status int, message string) {
 func setRentFlowSessionCookie(c *gin.Context, token string) {
 	maxAge := int((7 * 24 * time.Hour).Seconds())
 	secure := strings.EqualFold(os.Getenv("APP_ENV"), "production")
+	cookieDomain := strings.TrimSpace(os.Getenv("RENTFLOW_COOKIE_DOMAIN"))
 	c.SetSameSite(http.SameSiteLaxMode)
 	c.SetCookie(
 		services.RentFlowSessionCookieName,
 		token,
 		maxAge,
 		"/",
-		"",
+		cookieDomain,
 		secure,
 		true,
 	)
@@ -48,13 +49,14 @@ func setRentFlowSessionCookie(c *gin.Context, token string) {
 
 func clearRentFlowSessionCookie(c *gin.Context) {
 	secure := strings.EqualFold(os.Getenv("APP_ENV"), "production")
+	cookieDomain := strings.TrimSpace(os.Getenv("RENTFLOW_COOKIE_DOMAIN"))
 	c.SetSameSite(http.SameSiteLaxMode)
 	c.SetCookie(
 		services.RentFlowSessionCookieName,
 		"",
 		-1,
 		"/",
-		"",
+		cookieDomain,
 		secure,
 		true,
 	)
