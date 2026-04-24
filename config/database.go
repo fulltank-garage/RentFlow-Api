@@ -38,6 +38,7 @@ func ConnectDatabase() {
 	db.AutoMigrate(
 		&models.RentFlowUser{},
 		&models.RentFlowTenant{},
+		&models.RentFlowPlatformSetting{},
 		&models.RentFlowBranch{},
 		&models.RentFlowCar{},
 		&models.RentFlowCarImage{},

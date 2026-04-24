@@ -51,7 +51,7 @@ func NewID(prefix string) string {
 }
 
 func NewBookingCode() string {
-	return fmt.Sprintf("BK-%s", strings.ToUpper(hex.EncodeToString(randomBytes(4))))
+	return fmt.Sprintf("RF-%s-%s", time.Now().Format("20060102"), strings.ToUpper(hex.EncodeToString(randomBytes(3))))
 }
 
 func randomBytes(size int) []byte {
@@ -293,11 +293,11 @@ func CacheDeleteByPrefix(ctx context.Context, prefix string) {
 }
 
 func RentFlowCarsCachePrefix() string {
-	return rentFlowCachePrefix + "cars"
+	return rentFlowCachePrefix + "cars:v2"
 }
 
 func RentFlowBranchesCachePrefix() string {
-	return rentFlowCachePrefix + "branches"
+	return rentFlowCachePrefix + "branches:v2"
 }
 
 func ExpandDateRange(start, end time.Time) []string {

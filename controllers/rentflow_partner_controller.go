@@ -524,7 +524,7 @@ func rentFlowBuildPartnerBranchFromPayload(c *gin.Context, tenantID, branchID st
 	}
 	locationID := strings.TrimSpace(payload.LocationID)
 	if locationID == "" {
-		locationID = branchID
+		locationID = name
 	}
 	displayOrder := payload.DisplayOrder
 	if displayOrder < 1 {

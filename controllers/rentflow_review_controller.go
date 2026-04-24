@@ -67,6 +67,7 @@ func RentFlowGetReviews(c *gin.Context) {
 			"shopName":     tenant.ShopName,
 			"domainSlug":   tenant.DomainSlug,
 			"publicDomain": tenant.PublicDomain,
+			"logoUrl":      rentFlowTenantLogoURL(tenant),
 		})
 	}
 

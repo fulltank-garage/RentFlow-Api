@@ -92,7 +92,12 @@ func RentFlowGetCars(c *gin.Context) {
 	query := config.DB.Where("tenant_id IN ? AND is_available = ? AND status = ?", tenantIDs, true, "available")
 
 	if location := strings.TrimSpace(c.Query("location")); location != "" {
-		query = query.Where("location_id = ?", location)
+		locationIDs := rentFlowLocationIDsForFilter(tenantIDs, location)
+		if len(locationIDs) > 0 {
+			query = query.Where("location_id IN ?", locationIDs)
+		} else {
+			query = query.Where("location_id = ?", location)
+		}
 	}
 
 	if carType := strings.TrimSpace(c.Query("type")); carType != "" && !strings.EqualFold(carType, "all") {
@@ -181,6 +186,8 @@ func RentFlowGetCars(c *gin.Context) {
 			"shopName":            tenant.ShopName,
 			"domainSlug":          tenant.DomainSlug,
 			"publicDomain":        tenant.PublicDomain,
+			"logoUrl":             rentFlowTenantLogoURL(tenant),
+			"promoImageUrl":       rentFlowTenantPromoImageURL(tenant),
 			"lineOfficialAccount": rentFlowPublicLineSummary(car.TenantID),
 		})
 	}
@@ -384,20 +391,23 @@ func RentFlowGetBranches(c *gin.Context) {
 	for _, branch := range branches {
 		tenant := tenantMap[branch.TenantID]
 		responseItems = append(responseItems, gin.H{
-			"id":           branch.ID,
-			"tenantId":     branch.TenantID,
-			"name":         branch.Name,
-			"address":      branch.Address,
-			"phone":        branch.Phone,
-			"locationId":   branch.LocationID,
-			"lat":          branch.Lat,
-			"lng":          branch.Lng,
-			"openTime":     branch.OpenTime,
-			"closeTime":    branch.CloseTime,
-			"isActive":     branch.IsActive,
-			"shopName":     tenant.ShopName,
-			"domainSlug":   tenant.DomainSlug,
-			"publicDomain": tenant.PublicDomain,
+			"id":            branch.ID,
+			"tenantId":      branch.TenantID,
+			"name":          rentFlowBranchDisplayName(branch),
+			"rawName":       branch.Name,
+			"address":       branch.Address,
+			"phone":         branch.Phone,
+			"locationId":    branch.LocationID,
+			"lat":           branch.Lat,
+			"lng":           branch.Lng,
+			"openTime":      branch.OpenTime,
+			"closeTime":     branch.CloseTime,
+			"isActive":      branch.IsActive,
+			"shopName":      tenant.ShopName,
+			"domainSlug":    tenant.DomainSlug,
+			"publicDomain":  tenant.PublicDomain,
+			"logoUrl":       rentFlowTenantLogoURL(tenant),
+			"promoImageUrl": rentFlowTenantPromoImageURL(tenant),
 		})
 	}
 
@@ -408,6 +418,119 @@ func RentFlowGetBranches(c *gin.Context) {
 	}
 	services.CacheSetJSON(config.Ctx, cacheKey, response, 30*time.Minute)
 	c.JSON(http.StatusOK, response)
+}
+
+func rentFlowLocationIDsForFilter(tenantIDs []string, location string) []string {
+	location = strings.TrimSpace(location)
+	if location == "" || len(tenantIDs) == 0 {
+		return nil
+	}
+
+	var branches []models.RentFlowBranch
+	if err := config.DB.
+		Where("tenant_id IN ? AND (id = ? OR location_id = ? OR name = ?)", tenantIDs, location, location, location).
+		Find(&branches).Error; err != nil {
+		return nil
+	}
+
+	seen := map[string]struct{}{location: {}}
+	values := []string{location}
+	for _, branch := range branches {
+		for _, value := range []string{branch.LocationID, branch.ID, branch.Name} {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
+func rentFlowBranchDisplayName(branch models.RentFlowBranch) string {
+	name := strings.TrimSpace(branch.Name)
+	if name != "" && !rentFlowLooksGeneratedID(name, "brn") {
+		return name
+	}
+
+	locationID := strings.TrimSpace(branch.LocationID)
+	if locationID != "" && !rentFlowLooksGeneratedID(locationID, "brn") {
+		return rentFlowThaiLocationName(locationID)
+	}
+
+	address := strings.TrimSpace(branch.Address)
+	if address != "" {
+		return address
+	}
+
+	return "สาขาหลัก"
+}
+
+func rentFlowLooksGeneratedID(value, prefix string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	return strings.HasPrefix(normalized, prefix+"_") ||
+		strings.HasPrefix(normalized, prefix+"-")
+}
+
+func rentFlowThaiLocationName(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	normalized = strings.ReplaceAll(normalized, "_", "-")
+
+	labels := map[string]string{
+		"bangkok":             "กรุงเทพฯ",
+		"pattaya":             "พัทยา",
+		"phuket":              "ภูเก็ต",
+		"chiangmai":           "เชียงใหม่",
+		"chiang-mai":          "เชียงใหม่",
+		"khonkaen":            "ขอนแก่น",
+		"khon-kaen":           "ขอนแก่น",
+		"korat":               "นครราชสีมา",
+		"nakhonratchasima":    "นครราชสีมา",
+		"nakhon-ratchasima":   "นครราชสีมา",
+		"udonthani":           "อุดรธานี",
+		"udon-thani":          "อุดรธานี",
+		"suratthani":          "สุราษฎร์ธานี",
+		"surat-thani":         "สุราษฎร์ธานี",
+		"huahin":              "หัวหิน",
+		"hua-hin":             "หัวหิน",
+		"suphanburi":          "สุพรรณบุรี",
+		"suphan-buri":         "สุพรรณบุรี",
+		"suphanburi-downtown": "สุพรรณบุรี (ในเมือง)",
+	}
+
+	if label, ok := labels[normalized]; ok {
+		return label
+	}
+
+	parts := strings.FieldsFunc(normalized, func(r rune) bool {
+		return r == '-' || r == ' '
+	})
+	for index, part := range parts {
+		if label, ok := labels[part]; ok {
+			parts[index] = label
+			continue
+		}
+		if part != "" {
+			parts[index] = rentFlowTitleLocationPart(part)
+		}
+	}
+
+	if len(parts) == 0 {
+		return strings.TrimSpace(value)
+	}
+	return strings.Join(parts, " ")
+}
+
+func rentFlowTitleLocationPart(value string) string {
+	runes := []rune(value)
+	if len(runes) == 0 {
+		return value
+	}
+	return strings.ToUpper(string(runes[0])) + string(runes[1:])
 }
 
 func RentFlowGetBranchByID(c *gin.Context) {
@@ -425,7 +548,26 @@ func RentFlowGetBranchByID(c *gin.Context) {
 		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถดึงข้อมูลสาขาได้")
 		return
 	}
-	rentFlowSuccess(c, http.StatusOK, "ดึงข้อมูลสาขาสำเร็จ", branch)
+	tenantValue := *tenant
+	rentFlowSuccess(c, http.StatusOK, "ดึงข้อมูลสาขาสำเร็จ", gin.H{
+		"id":            branch.ID,
+		"tenantId":      branch.TenantID,
+		"name":          rentFlowBranchDisplayName(branch),
+		"rawName":       branch.Name,
+		"address":       branch.Address,
+		"phone":         branch.Phone,
+		"locationId":    branch.LocationID,
+		"lat":           branch.Lat,
+		"lng":           branch.Lng,
+		"openTime":      branch.OpenTime,
+		"closeTime":     branch.CloseTime,
+		"isActive":      branch.IsActive,
+		"shopName":      tenantValue.ShopName,
+		"domainSlug":    tenantValue.DomainSlug,
+		"publicDomain":  tenantValue.PublicDomain,
+		"logoUrl":       rentFlowTenantLogoURL(tenantValue),
+		"promoImageUrl": rentFlowTenantPromoImageURL(tenantValue),
+	})
 }
 
 func RentFlowCheckAvailability(c *gin.Context) {

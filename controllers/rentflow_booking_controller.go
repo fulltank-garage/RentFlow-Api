@@ -100,9 +100,15 @@ func RentFlowCreateBooking(c *gin.Context) {
 	}
 
 	customerEmail := strings.TrimSpace(strings.ToLower(payload.CustomerEmail))
-	if customerEmail == "" || strings.TrimSpace(payload.CustomerName) == "" || strings.TrimSpace(payload.CustomerPhone) == "" {
+	if strings.TrimSpace(payload.CustomerName) == "" || strings.TrimSpace(payload.CustomerPhone) == "" {
 		rentFlowError(c, http.StatusBadRequest, "กรุณากรอกข้อมูลผู้จองให้ครบถ้วน")
 		return
+	}
+	if customerEmail == "" {
+		customerEmail = strings.TrimSpace(strings.ToLower(user.Email))
+	}
+	if customerEmail == "" {
+		customerEmail = "no-email@rentflow.local"
 	}
 
 	totalDays, subtotal, extraCharge, discount, totalAmount := services.ComputeBookingPrice(
@@ -148,7 +154,7 @@ func RentFlowCreateBooking(c *gin.Context) {
 	}
 
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
-	rentFlowSuccess(c, http.StatusCreated, "สร้างรายการจองสำเร็จ", booking)
+	rentFlowSuccess(c, http.StatusCreated, "สร้างรายการจองสำเร็จ", rentFlowBookingResponse(booking))
 }
 
 func RentFlowGetMyBookings(c *gin.Context) {
@@ -167,7 +173,7 @@ func RentFlowGetMyBookings(c *gin.Context) {
 		return
 	}
 
-	rentFlowSuccess(c, http.StatusOK, "ดึงรายการจองสำเร็จ", bookings)
+	rentFlowSuccess(c, http.StatusOK, "ดึงรายการจองสำเร็จ", rentFlowBookingResponses(bookings))
 }
 
 func RentFlowGetBookingByID(c *gin.Context) {
@@ -175,7 +181,7 @@ func RentFlowGetBookingByID(c *gin.Context) {
 	if !ok {
 		return
 	}
-	rentFlowSuccess(c, http.StatusOK, "ดึงข้อมูลการจองสำเร็จ", booking)
+	rentFlowSuccess(c, http.StatusOK, "ดึงข้อมูลการจองสำเร็จ", rentFlowBookingResponse(*booking))
 }
 
 func RentFlowCancelBooking(c *gin.Context) {
@@ -206,7 +212,7 @@ func RentFlowCancelBooking(c *gin.Context) {
 	booking.Status = "cancelled"
 	rentFlowCreateNotification(booking.TenantID, booking.UserID, booking.CustomerEmail, "ยกเลิกการจอง", "การจอง "+booking.BookingCode+" ถูกยกเลิกแล้ว")
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
-	rentFlowSuccess(c, http.StatusOK, "ยกเลิกรายการจองสำเร็จ", booking)
+	rentFlowSuccess(c, http.StatusOK, "ยกเลิกรายการจองสำเร็จ", rentFlowBookingResponse(*booking))
 }
 
 func RentFlowCreatePayment(c *gin.Context) {
@@ -216,8 +222,9 @@ func RentFlowCreatePayment(c *gin.Context) {
 	}
 
 	var payload struct {
-		BookingID string `json:"bookingId"`
-		Method    string `json:"method"`
+		BookingID string  `json:"bookingId"`
+		Method    string  `json:"method"`
+		SlipImage *string `json:"slipImage"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		rentFlowError(c, http.StatusBadRequest, "ข้อมูลการชำระเงินไม่ถูกต้อง")
@@ -242,6 +249,16 @@ func RentFlowCreatePayment(c *gin.Context) {
 		method = "promptpay"
 	}
 
+	slipBlob, slipMimeType, err := rentFlowImageBlobFromSource(payload.SlipImage)
+	if err != nil {
+		rentFlowError(c, http.StatusBadRequest, "ไฟล์สลิปไม่ถูกต้อง")
+		return
+	}
+	if method == "bank_transfer" && len(slipBlob) == 0 {
+		rentFlowError(c, http.StatusBadRequest, "กรุณาแนบสลิปโอนเงิน")
+		return
+	}
+
 	payment := models.RentFlowPayment{
 		ID:            services.NewID("pay"),
 		TenantID:      tenant.ID,
@@ -250,6 +267,8 @@ func RentFlowCreatePayment(c *gin.Context) {
 		Status:        "paid",
 		Amount:        booking.TotalAmount,
 		TransactionID: services.NewID("txn"),
+		SlipMimeType:  slipMimeType,
+		SlipBlob:      slipBlob,
 	}
 	if method == "promptpay" {
 		payment.QRCodeURL = "/QR-CODE.jpg"
@@ -274,7 +293,7 @@ func RentFlowCreatePayment(c *gin.Context) {
 	}
 
 	rentFlowCreateNotification(tenant.ID, booking.UserID, booking.CustomerEmail, "ชำระเงินสำเร็จ", "การจอง "+booking.BookingCode+" ชำระเงินเรียบร้อยแล้ว")
-	rentFlowSuccess(c, http.StatusCreated, "สร้างรายการชำระเงินสำเร็จ", payment)
+	rentFlowSuccess(c, http.StatusCreated, "สร้างรายการชำระเงินสำเร็จ", rentFlowPaymentResponse(payment))
 }
 
 func RentFlowGetPaymentByBookingID(c *gin.Context) {
@@ -292,7 +311,27 @@ func RentFlowGetPaymentByBookingID(c *gin.Context) {
 		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถดึงข้อมูลการชำระเงินได้")
 		return
 	}
-	rentFlowSuccess(c, http.StatusOK, "ดึงข้อมูลการชำระเงินสำเร็จ", payment)
+	rentFlowSuccess(c, http.StatusOK, "ดึงข้อมูลการชำระเงินสำเร็จ", rentFlowPaymentResponse(payment))
+}
+
+func RentFlowGetPaymentSlip(c *gin.Context) {
+	tenant, ok := rentFlowRequireTenant(c)
+	if !ok {
+		return
+	}
+
+	var payment models.RentFlowPayment
+	if err := config.DB.Where("tenant_id = ? AND id = ?", tenant.ID, c.Param("paymentId")).First(&payment).Error; err != nil {
+		rentFlowError(c, http.StatusNotFound, "ไม่พบสลิปชำระเงิน")
+		return
+	}
+
+	if len(payment.SlipBlob) == 0 || strings.TrimSpace(payment.SlipMimeType) == "" {
+		rentFlowError(c, http.StatusNotFound, "ไม่พบสลิปชำระเงิน")
+		return
+	}
+
+	rentFlowSendImageBlob(c, payment.SlipMimeType, payment.SlipBlob)
 }
 
 func RentFlowGetNotifications(c *gin.Context) {
@@ -410,6 +449,166 @@ func rentFlowLoadOwnedBooking(c *gin.Context, bookingID string) (*models.RentFlo
 	}
 
 	return &booking, true
+}
+
+func rentFlowBookingResponses(bookings []models.RentFlowBooking) []gin.H {
+	carIDs := make([]string, 0, len(bookings))
+	tenantIDs := make([]string, 0, len(bookings))
+	locationValues := make([]string, 0, len(bookings)*2)
+	seenCars := map[string]struct{}{}
+	seenTenants := map[string]struct{}{}
+	seenLocations := map[string]struct{}{}
+
+	for _, booking := range bookings {
+		if booking.CarID != "" {
+			if _, ok := seenCars[booking.CarID]; !ok {
+				seenCars[booking.CarID] = struct{}{}
+				carIDs = append(carIDs, booking.CarID)
+			}
+		}
+		if booking.TenantID != "" {
+			if _, ok := seenTenants[booking.TenantID]; !ok {
+				seenTenants[booking.TenantID] = struct{}{}
+				tenantIDs = append(tenantIDs, booking.TenantID)
+			}
+		}
+		for _, value := range []string{booking.PickupLocation, booking.ReturnLocation} {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			key := strings.ToLower(value)
+			if _, ok := seenLocations[key]; ok {
+				continue
+			}
+			seenLocations[key] = struct{}{}
+			locationValues = append(locationValues, value)
+		}
+	}
+
+	carMap := map[string]models.RentFlowCar{}
+	if len(carIDs) > 0 {
+		var cars []models.RentFlowCar
+		_ = config.DB.Unscoped().Where("id IN ?", carIDs).Find(&cars).Error
+		for _, car := range cars {
+			carMap[car.ID] = car
+		}
+	}
+
+	tenantMap := map[string]models.RentFlowTenant{}
+	if len(tenantIDs) > 0 {
+		var tenants []models.RentFlowTenant
+		_ = config.DB.Where("id IN ?", tenantIDs).Find(&tenants).Error
+		for _, tenant := range tenants {
+			tenantMap[tenant.ID] = tenant
+		}
+	}
+
+	branchNameMap := map[string]string{}
+	if len(tenantIDs) > 0 && len(locationValues) > 0 {
+		var branches []models.RentFlowBranch
+		_ = config.DB.
+			Where("tenant_id IN ? AND (id IN ? OR location_id IN ? OR name IN ?)", tenantIDs, locationValues, locationValues, locationValues).
+			Find(&branches).Error
+		for _, branch := range branches {
+			displayName := rentFlowBranchDisplayName(branch)
+			for _, value := range []string{branch.ID, branch.LocationID, branch.Name} {
+				value = strings.TrimSpace(value)
+				if value == "" {
+					continue
+				}
+				branchNameMap[branch.TenantID+"|"+strings.ToLower(value)] = displayName
+			}
+		}
+	}
+
+	items := make([]gin.H, 0, len(bookings))
+	for _, booking := range bookings {
+		items = append(items, rentFlowBookingResponseWithMaps(booking, carMap, tenantMap, branchNameMap))
+	}
+	return items
+}
+
+func rentFlowBookingResponse(booking models.RentFlowBooking) gin.H {
+	return rentFlowBookingResponses([]models.RentFlowBooking{booking})[0]
+}
+
+func rentFlowBookingResponseWithMaps(booking models.RentFlowBooking, carMap map[string]models.RentFlowCar, tenantMap map[string]models.RentFlowTenant, branchNameMap map[string]string) gin.H {
+	car := carMap[booking.CarID]
+	tenant := tenantMap[booking.TenantID]
+	pickupLocation := rentFlowDisplayBranchName(booking.TenantID, booking.PickupLocation, branchNameMap)
+	returnLocation := rentFlowDisplayBranchName(booking.TenantID, booking.ReturnLocation, branchNameMap)
+	carName := strings.TrimSpace(car.Name)
+	if carName == "" {
+		carName = booking.CarID
+	}
+
+	return gin.H{
+		"id":                  booking.ID,
+		"tenantId":            booking.TenantID,
+		"bookingCode":         booking.BookingCode,
+		"userId":              booking.UserID,
+		"carId":               booking.CarID,
+		"carName":             carName,
+		"status":              booking.Status,
+		"pickupDate":          booking.PickupDate,
+		"returnDate":          booking.ReturnDate,
+		"pickupLocation":      pickupLocation,
+		"returnLocation":      returnLocation,
+		"pickupLocationValue": booking.PickupLocation,
+		"returnLocationValue": booking.ReturnLocation,
+		"pickupMethod":        booking.PickupMethod,
+		"returnMethod":        booking.ReturnMethod,
+		"totalDays":           booking.TotalDays,
+		"subtotal":            booking.Subtotal,
+		"extraCharge":         booking.ExtraCharge,
+		"discount":            booking.Discount,
+		"totalAmount":         booking.TotalAmount,
+		"note":                booking.Note,
+		"customerName":        booking.CustomerName,
+		"customerEmail":       booking.CustomerEmail,
+		"customerPhone":       booking.CustomerPhone,
+		"createdAt":           booking.CreatedAt,
+		"updatedAt":           booking.UpdatedAt,
+		"shopName":            tenant.ShopName,
+		"domainSlug":          tenant.DomainSlug,
+		"publicDomain":        tenant.PublicDomain,
+		"logoUrl":             rentFlowTenantLogoURL(tenant),
+	}
+}
+
+func rentFlowDisplayBranchName(tenantID, value string, branchNameMap map[string]string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	if name := branchNameMap[tenantID+"|"+strings.ToLower(trimmed)]; strings.TrimSpace(name) != "" {
+		return name
+	}
+	return trimmed
+}
+
+func rentFlowPaymentResponse(payment models.RentFlowPayment) gin.H {
+	return gin.H{
+		"id":            payment.ID,
+		"tenantId":      payment.TenantID,
+		"bookingId":     payment.BookingID,
+		"method":        payment.Method,
+		"status":        payment.Status,
+		"amount":        payment.Amount,
+		"transactionId": payment.TransactionID,
+		"paymentUrl":    payment.PaymentURL,
+		"qrCodeUrl":     payment.QRCodeURL,
+		"slipUrl":       rentFlowPaymentSlipURL(payment),
+		"verifiedBy":    payment.VerifiedBy,
+		"verifiedAt":    payment.VerifiedAt,
+		"refundStatus":  payment.RefundStatus,
+		"refundAmount":  payment.RefundAmount,
+		"payoutStatus":  payment.PayoutStatus,
+		"settledAt":     payment.SettledAt,
+		"createdAt":     payment.CreatedAt,
+		"updatedAt":     payment.UpdatedAt,
+	}
 }
 
 func rentFlowCreateNotification(tenantID string, userID *string, userEmail, title, message string) {

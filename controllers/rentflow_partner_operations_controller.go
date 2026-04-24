@@ -155,9 +155,6 @@ func rentFlowPartnerUpdatePayment(c *gin.Context, status, action string) {
 		updates["status"] = status
 		updates["verified_by"] = user.ID
 		updates["verified_at"] = &now
-		if strings.TrimSpace(payload.SlipURL) != "" {
-			updates["slip_url"] = strings.TrimSpace(payload.SlipURL)
-		}
 	case "payment.refund":
 		updates["refund_status"] = "refunded"
 		updates["refund_amount"] = payload.RefundAmount
@@ -536,7 +533,7 @@ func rentFlowPartnerPaymentResponse(payment models.RentFlowPayment, booking mode
 		"transactionId": payment.TransactionID,
 		"paymentUrl":    payment.PaymentURL,
 		"qrCodeUrl":     payment.QRCodeURL,
-		"slipUrl":       payment.SlipURL,
+		"slipUrl":       rentFlowPaymentSlipURL(payment),
 		"verifiedBy":    payment.VerifiedBy,
 		"verifiedAt":    payment.VerifiedAt,
 		"refundStatus":  payment.RefundStatus,

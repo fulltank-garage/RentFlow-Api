@@ -51,6 +51,8 @@ func RentFlowAuthWithGoogle(c *gin.Context) {
 		name = email
 	}
 
+	avatarBlob, avatarMimeType, avatarErr := rentFlowImageBlobFromSource(&payload.User.Picture)
+
 	var user models.RentFlowUser
 	result := config.DB.Where("email = ?", email).First(&user)
 	isNewUser := false
@@ -66,14 +68,15 @@ func RentFlowAuthWithGoogle(c *gin.Context) {
 
 	if isNewUser {
 		user = models.RentFlowUser{
-			ID:        services.NewID("usr"),
-			GoogleSub: &googleSub,
-			Username:  email,
-			FirstName: firstName,
-			LastName:  lastName,
-			Name:      name,
-			Email:     email,
-			AvatarURL: strings.TrimSpace(payload.User.Picture),
+			ID:             services.NewID("usr"),
+			GoogleSub:      &googleSub,
+			Username:       email,
+			FirstName:      firstName,
+			LastName:       lastName,
+			Name:           name,
+			Email:          email,
+			AvatarMimeType: avatarMimeType,
+			AvatarBlob:     avatarBlob,
 		}
 		if err := config.DB.Create(&user).Error; err != nil {
 			rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถสร้างบัญชีผู้ใช้ได้")
@@ -86,8 +89,11 @@ func RentFlowAuthWithGoogle(c *gin.Context) {
 			"last_name":  lastName,
 			"name":       name,
 			"google_sub": googleSub,
-			"avatar_url": strings.TrimSpace(payload.User.Picture),
 			"updated_at": time.Now(),
+		}
+		if avatarErr == nil && len(avatarBlob) > 0 && avatarMimeType != "" {
+			updates["avatar_mime_type"] = avatarMimeType
+			updates["avatar_blob"] = avatarBlob
 		}
 		if err := config.DB.Model(&user).Updates(updates).Error; err != nil {
 			rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถอัปเดตข้อมูลผู้ใช้ได้")
@@ -98,7 +104,10 @@ func RentFlowAuthWithGoogle(c *gin.Context) {
 		user.LastName = lastName
 		user.Name = name
 		user.GoogleSub = &googleSub
-		user.AvatarURL = strings.TrimSpace(payload.User.Picture)
+		if avatarErr == nil && len(avatarBlob) > 0 && avatarMimeType != "" {
+			user.AvatarMimeType = avatarMimeType
+			user.AvatarBlob = avatarBlob
+		}
 	}
 
 	sessionToken, err := services.CreateSession(config.Ctx, services.RentFlowSession{
@@ -125,7 +134,7 @@ func RentFlowAuthWithGoogle(c *gin.Context) {
 	}
 
 	rentFlowSuccess(c, http.StatusOK, "เข้าสู่ระบบสำเร็จ", gin.H{
-		"user": user,
+		"user": rentFlowUserResponse(user),
 	})
 }
 
@@ -200,7 +209,7 @@ func RentFlowRegister(c *gin.Context) {
 	rentFlowCreateNotification("", &user.ID, user.Email, "ยินดีต้อนรับสู่ RentFlow", "บัญชีของคุณพร้อมใช้งานแล้ว")
 
 	rentFlowSuccess(c, http.StatusCreated, "สมัครสมาชิกสำเร็จ", gin.H{
-		"user": user,
+		"user": rentFlowUserResponse(user),
 	})
 }
 
@@ -242,8 +251,51 @@ func RentFlowLogin(c *gin.Context) {
 
 	setRentFlowSessionCookie(c, sessionToken)
 	rentFlowSuccess(c, http.StatusOK, "เข้าสู่ระบบสำเร็จ", gin.H{
-		"user": user,
+		"user": rentFlowUserResponse(user),
 	})
+}
+
+func RentFlowForgotPassword(c *gin.Context) {
+	var payload struct {
+		Username    string `json:"username"`
+		NewPassword string `json:"newPassword"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		rentFlowError(c, http.StatusBadRequest, "ข้อมูลเปลี่ยนรหัสผ่านไม่ถูกต้อง")
+		return
+	}
+
+	username := strings.TrimSpace(strings.ToLower(payload.Username))
+	if len(username) < 3 || len(strings.TrimSpace(payload.NewPassword)) < 8 {
+		rentFlowError(c, http.StatusBadRequest, "กรุณากรอกชื่อผู้ใช้และรหัสผ่านใหม่ให้ถูกต้อง")
+		return
+	}
+
+	hash, err := services.HashPasswordIfNeeded(payload.NewPassword)
+	if err != nil {
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถเปลี่ยนรหัสผ่านได้")
+		return
+	}
+
+	var user models.RentFlowUser
+	if err := config.DB.Where("username = ? OR email = ?", username, username).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			rentFlowError(c, http.StatusNotFound, "ไม่พบบัญชีผู้ใช้")
+			return
+		}
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถตรวจสอบบัญชีผู้ใช้ได้")
+		return
+	}
+
+	if err := config.DB.Model(&models.RentFlowUser{}).Where("id = ?", user.ID).Updates(map[string]interface{}{
+		"password_hash": hash,
+		"updated_at":    time.Now(),
+	}).Error; err != nil {
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถเปลี่ยนรหัสผ่านได้")
+		return
+	}
+
+	rentFlowSuccess(c, http.StatusOK, "เปลี่ยนรหัสผ่านสำเร็จ", nil)
 }
 
 func RentFlowGetMe(c *gin.Context) {
@@ -253,7 +305,7 @@ func RentFlowGetMe(c *gin.Context) {
 		return
 	}
 	rentFlowSuccess(c, http.StatusOK, "ดึงข้อมูลผู้ใช้สำเร็จ", gin.H{
-		"user": user,
+		"user": rentFlowUserResponse(*user),
 	})
 }
 
@@ -272,7 +324,7 @@ func RentFlowUserMe(c *gin.Context) {
 		rentFlowError(c, http.StatusUnauthorized, "กรุณาเข้าสู่ระบบก่อน")
 		return
 	}
-	rentFlowSuccess(c, http.StatusOK, "ดึงข้อมูลโปรไฟล์สำเร็จ", user)
+	rentFlowSuccess(c, http.StatusOK, "ดึงข้อมูลโปรไฟล์สำเร็จ", rentFlowUserResponse(*user))
 }
 
 func RentFlowUpdateMe(c *gin.Context) {
@@ -304,16 +356,39 @@ func RentFlowUpdateMe(c *gin.Context) {
 		user.Phone = strings.TrimSpace(*payload.Phone)
 	}
 	if payload.AvatarURL != nil {
-		updates["avatar_url"] = strings.TrimSpace(*payload.AvatarURL)
-		user.AvatarURL = strings.TrimSpace(*payload.AvatarURL)
+		avatarBlob, avatarMimeType, err := rentFlowImageBlobFromSource(payload.AvatarURL)
+		if err != nil {
+			rentFlowError(c, http.StatusBadRequest, "รูปโปรไฟล์ไม่ถูกต้อง")
+			return
+		}
+		updates["avatar_mime_type"] = avatarMimeType
+		updates["avatar_blob"] = avatarBlob
+		user.AvatarMimeType = avatarMimeType
+		user.AvatarBlob = avatarBlob
 	}
 
-	if err := config.DB.Model(&models.RentFlowUser{}).Where("id = ?", user.ID).Updates(updates).Error; err != nil {
+	if err := config.DB.Model(&models.RentFlowUser{}).Where("id = ?", user.ID).Select("*").Updates(updates).Error; err != nil {
 		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถอัปเดตโปรไฟล์ได้")
 		return
 	}
 
-	rentFlowSuccess(c, http.StatusOK, "อัปเดตโปรไฟล์สำเร็จ", user)
+	_ = config.DB.Where("id = ?", user.ID).First(user).Error
+	rentFlowSuccess(c, http.StatusOK, "อัปเดตโปรไฟล์สำเร็จ", rentFlowUserResponse(*user))
+}
+
+func RentFlowGetUserAvatar(c *gin.Context) {
+	var user models.RentFlowUser
+	if err := config.DB.Where("id = ?", strings.TrimSpace(c.Param("userId"))).First(&user).Error; err != nil {
+		rentFlowError(c, http.StatusNotFound, "ไม่พบรูปโปรไฟล์")
+		return
+	}
+
+	if len(user.AvatarBlob) == 0 || strings.TrimSpace(user.AvatarMimeType) == "" {
+		rentFlowError(c, http.StatusNotFound, "ไม่พบรูปโปรไฟล์")
+		return
+	}
+
+	rentFlowSendImageBlob(c, user.AvatarMimeType, user.AvatarBlob)
 }
 
 func RentFlowChangePassword(c *gin.Context) {

@@ -66,8 +66,10 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 	}
 
 	var payload struct {
-		ShopName   string `json:"shopName"`
-		DomainSlug string `json:"domainSlug"`
+		ShopName      string  `json:"shopName"`
+		DomainSlug    string  `json:"domainSlug"`
+		LogoURL       *string `json:"logoUrl"`
+		PromoImageURL *string `json:"promoImageUrl"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		rentFlowError(c, http.StatusBadRequest, "ข้อมูลร้านไม่ถูกต้อง")
@@ -82,6 +84,17 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 	}
 	if message := rentFlowValidateDomainSlug(domainSlug); message != "" {
 		rentFlowError(c, http.StatusBadRequest, message)
+		return
+	}
+
+	logoBlob, logoMimeType, err := rentFlowImageBlobFromSource(payload.LogoURL)
+	if err != nil {
+		rentFlowError(c, http.StatusBadRequest, "โลโก้ร้านไม่ถูกต้อง")
+		return
+	}
+	promoImageBlob, promoImageMimeType, err := rentFlowImageBlobFromSource(payload.PromoImageURL)
+	if err != nil {
+		rentFlowError(c, http.StatusBadRequest, "รูปโปรโมชันไม่ถูกต้อง")
 		return
 	}
 
@@ -117,19 +130,25 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 	ownerUserID := user.ID
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		tenant := models.RentFlowTenant{
-			ID:           services.NewID("tnt"),
-			OwnerUserID:  &ownerUserID,
-			OwnerEmail:   user.Email,
-			ShopName:     shopName,
-			DomainSlug:   domainSlug,
-			PublicDomain: publicDomain,
-			Status:       "active",
-			Plan:         "starter",
+			ID:                 services.NewID("tnt"),
+			OwnerUserID:        &ownerUserID,
+			OwnerEmail:         user.Email,
+			ShopName:           shopName,
+			DomainSlug:         domainSlug,
+			PublicDomain:       publicDomain,
+			LogoMimeType:       logoMimeType,
+			LogoBlob:           logoBlob,
+			PromoImageMimeType: promoImageMimeType,
+			PromoImageBlob:     promoImageBlob,
+			Status:             "active",
+			Plan:               "starter",
 		}
 		if err := config.DB.Create(&tenant).Error; err != nil {
 			rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถสร้างร้านได้")
 			return
 		}
+		services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
+		services.CacheDeleteByPrefix(config.Ctx, services.RentFlowBranchesCachePrefix())
 		rentFlowSuccess(c, http.StatusCreated, "บันทึกข้อมูลร้านสำเร็จ", rentFlowOwnerTenantResponse(tenant))
 		return
 	}
@@ -145,6 +164,14 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 	}
 	if existing.Plan == "" {
 		updates["plan"] = "starter"
+	}
+	if payload.LogoURL != nil {
+		updates["logo_mime_type"] = logoMimeType
+		updates["logo_blob"] = logoBlob
+	}
+	if payload.PromoImageURL != nil {
+		updates["promo_image_mime_type"] = promoImageMimeType
+		updates["promo_image_blob"] = promoImageBlob
 	}
 
 	if err := config.DB.Model(&models.RentFlowTenant{}).
@@ -163,7 +190,17 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 	if existing.Plan == "" {
 		existing.Plan = "starter"
 	}
+	if payload.LogoURL != nil {
+		existing.LogoMimeType = logoMimeType
+		existing.LogoBlob = logoBlob
+	}
+	if payload.PromoImageURL != nil {
+		existing.PromoImageMimeType = promoImageMimeType
+		existing.PromoImageBlob = promoImageBlob
+	}
 
+	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
+	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowBranchesCachePrefix())
 	rentFlowSuccess(c, http.StatusOK, "บันทึกข้อมูลร้านสำเร็จ", rentFlowOwnerTenantResponse(existing))
 }
 
@@ -382,14 +419,16 @@ func rentFlowSlugFromTenantIdentity(value string) string {
 
 func rentFlowPublicTenantResponse(tenant models.RentFlowTenant) gin.H {
 	response := gin.H{
-		"id":           tenant.ID,
-		"shopName":     tenant.ShopName,
-		"domainSlug":   tenant.DomainSlug,
-		"publicDomain": tenant.PublicDomain,
-		"status":       tenant.Status,
-		"plan":         tenant.Plan,
-		"createdAt":    tenant.CreatedAt,
-		"updatedAt":    tenant.UpdatedAt,
+		"id":            tenant.ID,
+		"shopName":      tenant.ShopName,
+		"domainSlug":    tenant.DomainSlug,
+		"publicDomain":  tenant.PublicDomain,
+		"logoUrl":       rentFlowTenantLogoURL(tenant),
+		"promoImageUrl": rentFlowTenantPromoImageURL(tenant),
+		"status":        tenant.Status,
+		"plan":          tenant.Plan,
+		"createdAt":     tenant.CreatedAt,
+		"updatedAt":     tenant.UpdatedAt,
 	}
 	if lineSummary := rentFlowPublicLineSummary(tenant.ID); lineSummary != nil {
 		response["lineOfficialAccount"] = lineSummary
@@ -401,6 +440,48 @@ func rentFlowOwnerTenantResponse(tenant models.RentFlowTenant) gin.H {
 	response := rentFlowPublicTenantResponse(tenant)
 	response["ownerEmail"] = tenant.OwnerEmail
 	return response
+}
+
+func RentFlowGetTenantLogo(c *gin.Context) {
+	slug := rentFlowNormalizeDomainSlug(c.Param("tenantSlug"))
+	if slug == "" {
+		rentFlowError(c, http.StatusNotFound, "ไม่พบโลโก้ร้าน")
+		return
+	}
+
+	var tenant models.RentFlowTenant
+	if err := config.DB.Where("status = ? AND domain_slug = ?", "active", slug).First(&tenant).Error; err != nil {
+		rentFlowError(c, http.StatusNotFound, "ไม่พบโลโก้ร้าน")
+		return
+	}
+
+	if len(tenant.LogoBlob) == 0 || strings.TrimSpace(tenant.LogoMimeType) == "" {
+		rentFlowError(c, http.StatusNotFound, "ไม่พบโลโก้ร้าน")
+		return
+	}
+
+	rentFlowSendImageBlob(c, tenant.LogoMimeType, tenant.LogoBlob)
+}
+
+func RentFlowGetTenantPromoImage(c *gin.Context) {
+	slug := rentFlowNormalizeDomainSlug(c.Param("tenantSlug"))
+	if slug == "" {
+		rentFlowError(c, http.StatusNotFound, "ไม่พบรูปโปรโมชัน")
+		return
+	}
+
+	var tenant models.RentFlowTenant
+	if err := config.DB.Where("status = ? AND domain_slug = ?", "active", slug).First(&tenant).Error; err != nil {
+		rentFlowError(c, http.StatusNotFound, "ไม่พบรูปโปรโมชัน")
+		return
+	}
+
+	if len(tenant.PromoImageBlob) == 0 || strings.TrimSpace(tenant.PromoImageMimeType) == "" {
+		rentFlowError(c, http.StatusNotFound, "ไม่พบรูปโปรโมชัน")
+		return
+	}
+
+	rentFlowSendImageBlob(c, tenant.PromoImageMimeType, tenant.PromoImageBlob)
 }
 
 func rentFlowPublicLineSummary(tenantID string) gin.H {

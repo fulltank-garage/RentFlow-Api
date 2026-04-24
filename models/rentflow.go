@@ -7,19 +7,21 @@ import (
 )
 
 type RentFlowUser struct {
-	ID           string         `gorm:"primaryKey;size:40" json:"id"`
-	GoogleSub    *string        `gorm:"size:120;uniqueIndex" json:"-"`
-	Username     string         `gorm:"size:80;uniqueIndex" json:"username,omitempty"`
-	FirstName    string         `gorm:"size:80" json:"firstName,omitempty"`
-	LastName     string         `gorm:"size:80" json:"lastName,omitempty"`
-	Name         string         `gorm:"size:150;not null" json:"name"`
-	Email        string         `gorm:"size:150;uniqueIndex;not null" json:"email"`
-	Phone        string         `gorm:"size:30" json:"phone,omitempty"`
-	AvatarURL    string         `gorm:"size:500" json:"avatarUrl,omitempty"`
-	PasswordHash string         `gorm:"size:255" json:"-"`
-	CreatedAt    time.Time      `json:"createdAt"`
-	UpdatedAt    time.Time      `json:"updatedAt"`
-	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
+	ID             string         `gorm:"primaryKey;size:40" json:"id"`
+	GoogleSub      *string        `gorm:"size:120;uniqueIndex" json:"-"`
+	Username       string         `gorm:"size:80;uniqueIndex" json:"username,omitempty"`
+	FirstName      string         `gorm:"size:80" json:"firstName,omitempty"`
+	LastName       string         `gorm:"size:80" json:"lastName,omitempty"`
+	Name           string         `gorm:"size:150;not null" json:"name"`
+	Email          string         `gorm:"size:150;uniqueIndex;not null" json:"email"`
+	Phone          string         `gorm:"size:30" json:"phone,omitempty"`
+	AvatarURL      string         `gorm:"-" json:"avatarUrl,omitempty"`
+	AvatarMimeType string         `gorm:"size:80" json:"-"`
+	AvatarBlob     []byte         `gorm:"type:bytea" json:"-"`
+	PasswordHash   string         `gorm:"size:255" json:"-"`
+	CreatedAt      time.Time      `json:"createdAt"`
+	UpdatedAt      time.Time      `json:"updatedAt"`
+	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (RentFlowUser) TableName() string {
@@ -27,21 +29,40 @@ func (RentFlowUser) TableName() string {
 }
 
 type RentFlowTenant struct {
-	ID           string         `gorm:"primaryKey;size:50" json:"id"`
-	OwnerUserID  *string        `gorm:"size:40;index" json:"ownerUserId,omitempty"`
-	OwnerEmail   string         `gorm:"size:150;index;not null" json:"ownerEmail"`
-	ShopName     string         `gorm:"size:150;not null" json:"shopName"`
-	DomainSlug   string         `gorm:"size:80;uniqueIndex;not null" json:"domainSlug"`
-	PublicDomain string         `gorm:"size:160;uniqueIndex;not null" json:"publicDomain"`
-	Status       string         `gorm:"size:30;index;not null;default:active" json:"status"`
-	Plan         string         `gorm:"size:40;not null;default:starter" json:"plan"`
-	CreatedAt    time.Time      `json:"createdAt"`
-	UpdatedAt    time.Time      `json:"updatedAt"`
-	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
+	ID                 string         `gorm:"primaryKey;size:50" json:"id"`
+	OwnerUserID        *string        `gorm:"size:40;index" json:"ownerUserId,omitempty"`
+	OwnerEmail         string         `gorm:"size:150;index;not null" json:"ownerEmail"`
+	ShopName           string         `gorm:"size:150;not null" json:"shopName"`
+	DomainSlug         string         `gorm:"size:80;uniqueIndex;not null" json:"domainSlug"`
+	PublicDomain       string         `gorm:"size:160;uniqueIndex;not null" json:"publicDomain"`
+	LogoURL            string         `gorm:"-" json:"logoUrl,omitempty"`
+	LogoMimeType       string         `gorm:"size:80" json:"-"`
+	LogoBlob           []byte         `gorm:"type:bytea" json:"-"`
+	PromoImageURL      string         `gorm:"-" json:"promoImageUrl,omitempty"`
+	PromoImageMimeType string         `gorm:"size:80" json:"-"`
+	PromoImageBlob     []byte         `gorm:"type:bytea" json:"-"`
+	Status             string         `gorm:"size:30;index;not null;default:active" json:"status"`
+	Plan               string         `gorm:"size:40;not null;default:starter" json:"plan"`
+	CreatedAt          time.Time      `json:"createdAt"`
+	UpdatedAt          time.Time      `json:"updatedAt"`
+	DeletedAt          gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (RentFlowTenant) TableName() string {
 	return "rentflow_tenants"
+}
+
+type RentFlowPlatformSetting struct {
+	Key           string    `gorm:"primaryKey;size:80" json:"key"`
+	ImageURL      string    `gorm:"-" json:"imageUrl,omitempty"`
+	ImageMimeType string    `gorm:"size:80" json:"-"`
+	ImageBlob     []byte    `gorm:"type:bytea" json:"-"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
+}
+
+func (RentFlowPlatformSetting) TableName() string {
+	return "rentflow_platform_settings"
 }
 
 type RentFlowBranch struct {
@@ -152,7 +173,9 @@ type RentFlowPayment struct {
 	TransactionID string         `gorm:"size:120" json:"transactionId,omitempty"`
 	PaymentURL    string         `gorm:"size:500" json:"paymentUrl,omitempty"`
 	QRCodeURL     string         `gorm:"size:500" json:"qrCodeUrl,omitempty"`
-	SlipURL       string         `gorm:"size:500" json:"slipUrl,omitempty"`
+	SlipURL       string         `gorm:"-" json:"slipUrl,omitempty"`
+	SlipMimeType  string         `gorm:"size:80" json:"-"`
+	SlipBlob      []byte         `gorm:"type:bytea" json:"-"`
 	VerifiedBy    string         `gorm:"size:50" json:"verifiedBy,omitempty"`
 	VerifiedAt    *time.Time     `json:"verifiedAt,omitempty"`
 	RefundStatus  string         `gorm:"size:30;index;default:none" json:"refundStatus,omitempty"`
