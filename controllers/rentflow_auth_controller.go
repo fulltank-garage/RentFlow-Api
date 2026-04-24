@@ -339,7 +339,11 @@ func RentFlowUpdateMe(c *gin.Context) {
 		"updated_at": now,
 	}
 
-	if strings.HasPrefix(strings.ToLower(c.ContentType()), "multipart/form-data") {
+	contentType := strings.ToLower(c.GetHeader("Content-Type"))
+	isMultipart := strings.Contains(contentType, "multipart/form-data") ||
+		strings.HasPrefix(strings.ToLower(c.ContentType()), "multipart/form-data")
+
+	if isMultipart {
 		if value, exists := c.GetPostForm("name"); exists {
 			updates["name"] = strings.TrimSpace(value)
 			user.Name = strings.TrimSpace(value)
@@ -367,6 +371,17 @@ func RentFlowUpdateMe(c *gin.Context) {
 		} else if !errors.Is(err, http.ErrMissingFile) {
 			rentFlowError(c, http.StatusBadRequest, "รูปโปรไฟล์ไม่ถูกต้อง")
 			return
+		}
+		if value, exists := c.GetPostForm("avatarUrl"); exists {
+			avatarBlob, avatarMimeType, err := rentFlowImageBlobFromSource(&value)
+			if err != nil {
+				rentFlowError(c, http.StatusBadRequest, "รูปโปรไฟล์ไม่ถูกต้อง")
+				return
+			}
+			updates["avatar_mime_type"] = avatarMimeType
+			updates["avatar_blob"] = avatarBlob
+			user.AvatarMimeType = avatarMimeType
+			user.AvatarBlob = avatarBlob
 		}
 	} else {
 		var payload struct {

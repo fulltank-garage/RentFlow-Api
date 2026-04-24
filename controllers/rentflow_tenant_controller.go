@@ -35,6 +35,11 @@ var (
 	}
 )
 
+type rentFlowUploadedPromoImage struct {
+	Blob     []byte
+	MimeType string
+}
+
 func RentFlowResolveTenant(c *gin.Context) {
 	tenant, ok := rentFlowRequireTenant(c)
 	if !ok {
@@ -66,14 +71,111 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 	}
 
 	var payload struct {
-		ShopName      string  `json:"shopName"`
-		DomainSlug    string  `json:"domainSlug"`
-		LogoURL       *string `json:"logoUrl"`
-		PromoImageURL *string `json:"promoImageUrl"`
+		ShopName         string    `json:"shopName"`
+		DomainSlug       string    `json:"domainSlug"`
+		LogoURL          *string   `json:"logoUrl"`
+		PromoImageURL    *string   `json:"promoImageUrl"`
+		PromoImageURLs   *[]string `json:"promoImageUrls"`
+		ClearPromoImages bool      `json:"clearPromoImages"`
 	}
-	if err := c.ShouldBindJSON(&payload); err != nil {
+
+	var logoBlob []byte
+	var logoMimeType string
+	var promoImageBlob []byte
+	var promoImageMimeType string
+	var promoImages []rentFlowUploadedPromoImage
+	logoProvided := false
+	promoImageProvided := false
+	promoImagesProvided := false
+	clearPromoImages := false
+
+	contentType := strings.ToLower(c.GetHeader("Content-Type"))
+	isMultipart := strings.Contains(contentType, "multipart/form-data") ||
+		strings.Contains(strings.ToLower(c.ContentType()), "multipart/form-data") ||
+		strings.Contains(contentType, "boundary=")
+	if isMultipart {
+		payload.ShopName = c.PostForm("shopName")
+		payload.DomainSlug = c.PostForm("domainSlug")
+		clearPromoImages = strings.EqualFold(strings.TrimSpace(c.PostForm("clearPromoImages")), "true")
+
+		if value, exists := c.GetPostForm("logoUrl"); exists {
+			payload.LogoURL = &value
+			logoProvided = true
+			var err error
+			logoBlob, logoMimeType, err = rentFlowImageBlobFromSource(&value)
+			if err != nil {
+				rentFlowError(c, http.StatusBadRequest, "โลโก้ร้านไม่ถูกต้อง")
+				return
+			}
+		}
+		if fileHeader, err := c.FormFile("logo"); err == nil {
+			logoProvided = true
+			logoBlob, logoMimeType, err = rentFlowImageBlobFromUpload(fileHeader)
+			if err != nil {
+				rentFlowError(c, http.StatusBadRequest, err.Error())
+				return
+			}
+		} else if !errors.Is(err, http.ErrMissingFile) {
+			rentFlowError(c, http.StatusBadRequest, "โลโก้ร้านไม่ถูกต้อง")
+			return
+		}
+
+		if value, exists := c.GetPostForm("promoImageUrl"); exists {
+			payload.PromoImageURL = &value
+			promoImageProvided = true
+			var err error
+			promoImageBlob, promoImageMimeType, err = rentFlowImageBlobFromSource(&value)
+			if err != nil {
+				rentFlowError(c, http.StatusBadRequest, "รูปโปรโมชันไม่ถูกต้อง")
+				return
+			}
+		}
+		if fileHeader, err := c.FormFile("promoImage"); err == nil {
+			promoImageProvided = true
+			promoImageBlob, promoImageMimeType, err = rentFlowImageBlobFromUpload(fileHeader)
+			if err != nil {
+				rentFlowError(c, http.StatusBadRequest, err.Error())
+				return
+			}
+		} else if !errors.Is(err, http.ErrMissingFile) {
+			rentFlowError(c, http.StatusBadRequest, "รูปโปรโมชันไม่ถูกต้อง")
+			return
+		}
+		if form, err := c.MultipartForm(); err == nil && form != nil {
+			for _, source := range rentFlowMultipartStringValues(form.Value["promoImageUrls"]) {
+				blob, mimeType, err := rentFlowImageBlobFromSource(&source)
+				if err != nil {
+					rentFlowError(c, http.StatusBadRequest, "รูปโปรโมชันไม่ถูกต้อง")
+					return
+				}
+				promoImages = append(promoImages, rentFlowUploadedPromoImage{
+					Blob:     blob,
+					MimeType: mimeType,
+				})
+			}
+			for _, fileHeader := range form.File["promoImages"] {
+				blob, mimeType, err := rentFlowImageBlobFromUpload(fileHeader)
+				if err != nil {
+					rentFlowError(c, http.StatusBadRequest, err.Error())
+					return
+				}
+				promoImages = append(promoImages, rentFlowUploadedPromoImage{
+					Blob:     blob,
+					MimeType: mimeType,
+				})
+			}
+		}
+		if len(promoImages) > 0 {
+			promoImagesProvided = true
+			promoImageProvided = true
+			promoImageBlob = promoImages[0].Blob
+			promoImageMimeType = promoImages[0].MimeType
+		}
+	} else if err := c.ShouldBindJSON(&payload); err != nil {
 		rentFlowError(c, http.StatusBadRequest, "ข้อมูลร้านไม่ถูกต้อง")
 		return
+	} else {
+		clearPromoImages = payload.ClearPromoImages
 	}
 
 	shopName := strings.TrimSpace(payload.ShopName)
@@ -87,15 +189,43 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 		return
 	}
 
-	logoBlob, logoMimeType, err := rentFlowImageBlobFromSource(payload.LogoURL)
-	if err != nil {
-		rentFlowError(c, http.StatusBadRequest, "โลโก้ร้านไม่ถูกต้อง")
-		return
-	}
-	promoImageBlob, promoImageMimeType, err := rentFlowImageBlobFromSource(payload.PromoImageURL)
-	if err != nil {
-		rentFlowError(c, http.StatusBadRequest, "รูปโปรโมชันไม่ถูกต้อง")
-		return
+	if !isMultipart {
+		var err error
+		logoProvided = payload.LogoURL != nil
+		promoImageProvided = payload.PromoImageURL != nil
+		logoBlob, logoMimeType, err = rentFlowImageBlobFromSource(payload.LogoURL)
+		if err != nil {
+			rentFlowError(c, http.StatusBadRequest, "โลโก้ร้านไม่ถูกต้อง")
+			return
+		}
+		promoImageBlob, promoImageMimeType, err = rentFlowImageBlobFromSource(payload.PromoImageURL)
+		if err != nil {
+			rentFlowError(c, http.StatusBadRequest, "รูปโปรโมชันไม่ถูกต้อง")
+			return
+		}
+		if payload.PromoImageURLs != nil {
+			promoImagesProvided = true
+			for _, source := range *payload.PromoImageURLs {
+				value := strings.TrimSpace(source)
+				if value == "" {
+					continue
+				}
+				blob, mimeType, err := rentFlowImageBlobFromSource(&value)
+				if err != nil {
+					rentFlowError(c, http.StatusBadRequest, "รูปโปรโมชันไม่ถูกต้อง")
+					return
+				}
+				promoImages = append(promoImages, rentFlowUploadedPromoImage{
+					Blob:     blob,
+					MimeType: mimeType,
+				})
+			}
+			if len(promoImages) > 0 {
+				promoImageProvided = true
+				promoImageBlob = promoImages[0].Blob
+				promoImageMimeType = promoImages[0].MimeType
+			}
+		}
 	}
 
 	publicDomain := rentFlowPublicDomain(domainSlug)
@@ -147,6 +277,20 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 			rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถสร้างร้านได้")
 			return
 		}
+		if promoImagesProvided && len(promoImages) > 0 {
+			if err := rentFlowReplaceTenantPromoImages(tenant.ID, promoImages); err != nil {
+				rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถบันทึกรูปโปรโมชันได้")
+				return
+			}
+		} else if promoImageProvided && len(promoImageBlob) > 0 && promoImageMimeType != "" {
+			if err := rentFlowReplaceTenantPromoImages(tenant.ID, []rentFlowUploadedPromoImage{{
+				Blob:     promoImageBlob,
+				MimeType: promoImageMimeType,
+			}}); err != nil {
+				rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถบันทึกรูปโปรโมชันได้")
+				return
+			}
+		}
 		services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
 		services.CacheDeleteByPrefix(config.Ctx, services.RentFlowBranchesCachePrefix())
 		rentFlowSuccess(c, http.StatusCreated, "บันทึกข้อมูลร้านสำเร็จ", rentFlowOwnerTenantResponse(tenant))
@@ -166,13 +310,16 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 	if existing.Plan == "" {
 		updates["plan"] = "starter"
 	}
-	if payload.LogoURL != nil {
+	if logoProvided {
 		updates["logo_mime_type"] = logoMimeType
 		updates["logo_blob"] = logoBlob
 	}
-	if payload.PromoImageURL != nil {
+	if promoImageProvided {
 		updates["promo_image_mime_type"] = promoImageMimeType
 		updates["promo_image_blob"] = promoImageBlob
+	} else if clearPromoImages {
+		updates["promo_image_mime_type"] = ""
+		updates["promo_image_blob"] = []byte{}
 	}
 
 	if err := config.DB.Model(&models.RentFlowTenant{}).
@@ -193,13 +340,35 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 	if existing.Plan == "" {
 		existing.Plan = "starter"
 	}
-	if payload.LogoURL != nil {
+	if logoProvided {
 		existing.LogoMimeType = logoMimeType
 		existing.LogoBlob = logoBlob
 	}
-	if payload.PromoImageURL != nil {
+	if promoImageProvided {
 		existing.PromoImageMimeType = promoImageMimeType
 		existing.PromoImageBlob = promoImageBlob
+	} else if clearPromoImages {
+		existing.PromoImageMimeType = ""
+		existing.PromoImageBlob = nil
+	}
+	if promoImagesProvided {
+		if err := rentFlowReplaceTenantPromoImages(existing.ID, promoImages); err != nil {
+			rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถบันทึกรูปโปรโมชันได้")
+			return
+		}
+	} else if promoImageProvided && len(promoImageBlob) > 0 && promoImageMimeType != "" {
+		if err := rentFlowReplaceTenantPromoImages(existing.ID, []rentFlowUploadedPromoImage{{
+			Blob:     promoImageBlob,
+			MimeType: promoImageMimeType,
+		}}); err != nil {
+			rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถบันทึกรูปโปรโมชันได้")
+			return
+		}
+	} else if clearPromoImages {
+		if err := rentFlowReplaceTenantPromoImages(existing.ID, nil); err != nil {
+			rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถบันทึกรูปโปรโมชันได้")
+			return
+		}
 	}
 
 	_ = config.DB.Where("id = ?", existing.ID).First(&existing).Error
@@ -207,6 +376,42 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowBranchesCachePrefix())
 	rentFlowSuccess(c, http.StatusOK, "บันทึกข้อมูลร้านสำเร็จ", rentFlowOwnerTenantResponse(existing))
+}
+
+func rentFlowMultipartStringValues(values []string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		result = append(result, trimmed)
+	}
+	return result
+}
+
+func rentFlowReplaceTenantPromoImages(tenantID string, images []rentFlowUploadedPromoImage) error {
+	return config.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("tenant_id = ?", tenantID).Delete(&models.RentFlowTenantPromoImage{}).Error; err != nil {
+			return err
+		}
+		for index, image := range images {
+			if len(image.Blob) == 0 || strings.TrimSpace(image.MimeType) == "" {
+				continue
+			}
+			item := models.RentFlowTenantPromoImage{
+				ID:           services.NewID("tpi"),
+				TenantID:     tenantID,
+				MimeType:     image.MimeType,
+				Blob:         image.Blob,
+				DisplayOrder: index + 1,
+			}
+			if err := tx.Create(&item).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func rentFlowUpdateColumns(updates map[string]interface{}) []string {
@@ -431,17 +636,24 @@ func rentFlowSlugFromTenantIdentity(value string) string {
 }
 
 func rentFlowPublicTenantResponse(tenant models.RentFlowTenant) gin.H {
+	promoImageUrls := rentFlowTenantPromoImageURLs(tenant)
+	promoImageUrl := ""
+	if len(promoImageUrls) > 0 {
+		promoImageUrl = promoImageUrls[0]
+	}
+
 	response := gin.H{
-		"id":            tenant.ID,
-		"shopName":      tenant.ShopName,
-		"domainSlug":    tenant.DomainSlug,
-		"publicDomain":  tenant.PublicDomain,
-		"logoUrl":       rentFlowTenantLogoURL(tenant),
-		"promoImageUrl": rentFlowTenantPromoImageURL(tenant),
-		"status":        tenant.Status,
-		"plan":          tenant.Plan,
-		"createdAt":     tenant.CreatedAt,
-		"updatedAt":     tenant.UpdatedAt,
+		"id":             tenant.ID,
+		"shopName":       tenant.ShopName,
+		"domainSlug":     tenant.DomainSlug,
+		"publicDomain":   tenant.PublicDomain,
+		"logoUrl":        rentFlowTenantLogoURL(tenant),
+		"promoImageUrl":  promoImageUrl,
+		"promoImageUrls": promoImageUrls,
+		"status":         tenant.Status,
+		"plan":           tenant.Plan,
+		"createdAt":      tenant.CreatedAt,
+		"updatedAt":      tenant.UpdatedAt,
 	}
 	if lineSummary := rentFlowPublicLineSummary(tenant.ID); lineSummary != nil {
 		response["lineOfficialAccount"] = lineSummary
@@ -495,6 +707,34 @@ func RentFlowGetTenantPromoImage(c *gin.Context) {
 	}
 
 	rentFlowSendImageBlob(c, tenant.PromoImageMimeType, tenant.PromoImageBlob)
+}
+
+func RentFlowGetTenantPromoImageByID(c *gin.Context) {
+	slug := rentFlowNormalizeDomainSlug(c.Param("tenantSlug"))
+	imageID := strings.TrimSpace(c.Param("imageId"))
+	if slug == "" || imageID == "" {
+		rentFlowError(c, http.StatusNotFound, "ไม่พบรูปโปรโมชัน")
+		return
+	}
+
+	var tenant models.RentFlowTenant
+	if err := config.DB.Where("status = ? AND domain_slug = ?", "active", slug).First(&tenant).Error; err != nil {
+		rentFlowError(c, http.StatusNotFound, "ไม่พบรูปโปรโมชัน")
+		return
+	}
+
+	var image models.RentFlowTenantPromoImage
+	if err := config.DB.Where("tenant_id = ? AND id = ?", tenant.ID, imageID).First(&image).Error; err != nil {
+		rentFlowError(c, http.StatusNotFound, "ไม่พบรูปโปรโมชัน")
+		return
+	}
+
+	if len(image.Blob) == 0 || strings.TrimSpace(image.MimeType) == "" {
+		rentFlowError(c, http.StatusNotFound, "ไม่พบรูปโปรโมชัน")
+		return
+	}
+
+	rentFlowSendImageBlob(c, image.MimeType, image.Blob)
 }
 
 func rentFlowPublicLineSummary(tenantID string) gin.H {

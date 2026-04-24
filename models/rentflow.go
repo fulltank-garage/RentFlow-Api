@@ -52,6 +52,20 @@ func (RentFlowTenant) TableName() string {
 	return "rentflow_tenants"
 }
 
+type RentFlowTenantPromoImage struct {
+	ID           string    `gorm:"primaryKey;size:80" json:"id"`
+	TenantID     string    `gorm:"size:50;index;not null" json:"tenantId"`
+	MimeType     string    `gorm:"size:80;not null" json:"-"`
+	Blob         []byte    `gorm:"type:bytea;not null" json:"-"`
+	DisplayOrder int       `gorm:"index;default:1" json:"displayOrder"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+}
+
+func (RentFlowTenantPromoImage) TableName() string {
+	return "rentflow_tenant_promo_images"
+}
+
 type RentFlowPlatformSetting struct {
 	Key           string    `gorm:"primaryKey;size:80" json:"key"`
 	ImageURL      string    `gorm:"-" json:"imageUrl,omitempty"`

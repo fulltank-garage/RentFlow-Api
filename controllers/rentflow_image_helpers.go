@@ -7,10 +7,12 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"rentflow-api/config"
 	"rentflow-api/models"
 )
 
@@ -33,6 +35,40 @@ func rentFlowTenantPromoImageURL(tenant models.RentFlowTenant) string {
 		return ""
 	}
 	return "/tenants/" + url.PathEscape(tenant.DomainSlug) + "/promo-image?v=" + url.QueryEscape(tenant.UpdatedAt.UTC().Format(time.RFC3339Nano))
+}
+
+func rentFlowTenantPromoImageURLByImage(tenant models.RentFlowTenant, image models.RentFlowTenantPromoImage) string {
+	if len(image.Blob) == 0 || strings.TrimSpace(image.MimeType) == "" {
+		return ""
+	}
+	version := image.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	if image.UpdatedAt.IsZero() {
+		version = strconv.Itoa(image.DisplayOrder)
+	}
+	return "/tenants/" + url.PathEscape(tenant.DomainSlug) + "/promo-images/" + url.PathEscape(image.ID) + "?v=" + url.QueryEscape(version)
+}
+
+func rentFlowTenantPromoImageURLs(tenant models.RentFlowTenant) []string {
+	var images []models.RentFlowTenantPromoImage
+	if err := config.DB.
+		Where("tenant_id = ?", tenant.ID).
+		Order("display_order ASC, created_at ASC").
+		Find(&images).Error; err == nil && len(images) > 0 {
+		urls := make([]string, 0, len(images))
+		for _, image := range images {
+			if imageURL := rentFlowTenantPromoImageURLByImage(tenant, image); imageURL != "" {
+				urls = append(urls, imageURL)
+			}
+		}
+		if len(urls) > 0 {
+			return urls
+		}
+	}
+
+	if fallback := rentFlowTenantPromoImageURL(tenant); fallback != "" {
+		return []string{fallback}
+	}
+	return []string{}
 }
 
 func rentFlowPlatformImageURL(setting models.RentFlowPlatformSetting) string {
