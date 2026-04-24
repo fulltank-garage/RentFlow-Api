@@ -297,7 +297,7 @@ func RentFlowCarsCachePrefix() string {
 }
 
 func RentFlowBranchesCachePrefix() string {
-	return rentFlowCachePrefix + "branches:v2"
+	return rentFlowCachePrefix + "branches:v3"
 }
 
 func ExpandDateRange(start, end time.Time) []string {

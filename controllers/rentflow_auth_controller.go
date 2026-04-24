@@ -334,40 +334,76 @@ func RentFlowUpdateMe(c *gin.Context) {
 		return
 	}
 
-	var payload struct {
-		Name      *string `json:"name"`
-		Phone     *string `json:"phone"`
-		AvatarURL *string `json:"avatarUrl"`
-	}
-	if err := c.ShouldBindJSON(&payload); err != nil {
-		rentFlowError(c, http.StatusBadRequest, "ข้อมูลโปรไฟล์ไม่ถูกต้อง")
-		return
+	now := time.Now()
+	updates := map[string]interface{}{
+		"updated_at": now,
 	}
 
-	updates := map[string]interface{}{
-		"updated_at": time.Now(),
-	}
-	if payload.Name != nil {
-		updates["name"] = strings.TrimSpace(*payload.Name)
-		user.Name = strings.TrimSpace(*payload.Name)
-	}
-	if payload.Phone != nil {
-		updates["phone"] = strings.TrimSpace(*payload.Phone)
-		user.Phone = strings.TrimSpace(*payload.Phone)
-	}
-	if payload.AvatarURL != nil {
-		avatarBlob, avatarMimeType, err := rentFlowImageBlobFromSource(payload.AvatarURL)
-		if err != nil {
+	if strings.HasPrefix(strings.ToLower(c.ContentType()), "multipart/form-data") {
+		if value, exists := c.GetPostForm("name"); exists {
+			updates["name"] = strings.TrimSpace(value)
+			user.Name = strings.TrimSpace(value)
+		}
+		if value, exists := c.GetPostForm("phone"); exists {
+			updates["phone"] = strings.TrimSpace(value)
+			user.Phone = strings.TrimSpace(value)
+		}
+		if strings.EqualFold(strings.TrimSpace(c.PostForm("clearAvatar")), "true") {
+			updates["avatar_mime_type"] = ""
+			updates["avatar_blob"] = []byte{}
+			user.AvatarMimeType = ""
+			user.AvatarBlob = []byte{}
+		}
+		if fileHeader, err := c.FormFile("avatar"); err == nil {
+			avatarBlob, avatarMimeType, err := rentFlowImageBlobFromUpload(fileHeader)
+			if err != nil {
+				rentFlowError(c, http.StatusBadRequest, "รูปโปรไฟล์ไม่ถูกต้อง")
+				return
+			}
+			updates["avatar_mime_type"] = avatarMimeType
+			updates["avatar_blob"] = avatarBlob
+			user.AvatarMimeType = avatarMimeType
+			user.AvatarBlob = avatarBlob
+		} else if !errors.Is(err, http.ErrMissingFile) {
 			rentFlowError(c, http.StatusBadRequest, "รูปโปรไฟล์ไม่ถูกต้อง")
 			return
 		}
-		updates["avatar_mime_type"] = avatarMimeType
-		updates["avatar_blob"] = avatarBlob
-		user.AvatarMimeType = avatarMimeType
-		user.AvatarBlob = avatarBlob
+	} else {
+		var payload struct {
+			Name      *string `json:"name"`
+			Phone     *string `json:"phone"`
+			AvatarURL *string `json:"avatarUrl"`
+		}
+		if err := c.ShouldBindJSON(&payload); err != nil {
+			rentFlowError(c, http.StatusBadRequest, "ข้อมูลโปรไฟล์ไม่ถูกต้อง")
+			return
+		}
+
+		if payload.Name != nil {
+			updates["name"] = strings.TrimSpace(*payload.Name)
+			user.Name = strings.TrimSpace(*payload.Name)
+		}
+		if payload.Phone != nil {
+			updates["phone"] = strings.TrimSpace(*payload.Phone)
+			user.Phone = strings.TrimSpace(*payload.Phone)
+		}
+		if payload.AvatarURL != nil {
+			avatarBlob, avatarMimeType, err := rentFlowImageBlobFromSource(payload.AvatarURL)
+			if err != nil {
+				rentFlowError(c, http.StatusBadRequest, "รูปโปรไฟล์ไม่ถูกต้อง")
+				return
+			}
+			updates["avatar_mime_type"] = avatarMimeType
+			updates["avatar_blob"] = avatarBlob
+			user.AvatarMimeType = avatarMimeType
+			user.AvatarBlob = avatarBlob
+		}
 	}
 
-	if err := config.DB.Model(&models.RentFlowUser{}).Where("id = ?", user.ID).Select("*").Updates(updates).Error; err != nil {
+	if err := config.DB.Model(&models.RentFlowUser{}).
+		Where("id = ?", user.ID).
+		Select(rentFlowUpdateColumns(updates)).
+		Updates(updates).Error; err != nil {
 		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถอัปเดตโปรไฟล์ได้")
 		return
 	}

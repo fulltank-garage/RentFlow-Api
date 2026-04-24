@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
@@ -149,6 +150,25 @@ func rentFlowImageBlobFromSource(raw *string) ([]byte, string, error) {
 	}
 
 	return rentFlowFetchRemoteImage(source)
+}
+
+func rentFlowImageBlobFromUpload(fileHeader *multipart.FileHeader) ([]byte, string, error) {
+	if fileHeader == nil {
+		return nil, "", nil
+	}
+
+	file, err := fileHeader.Open()
+	if err != nil {
+		return nil, "", errors.New("ไม่สามารถอ่านไฟล์รูปภาพได้")
+	}
+	defer file.Close()
+
+	blob, err := io.ReadAll(io.LimitReader(file, rentFlowMaxCarImageBytes+1))
+	if err != nil {
+		return nil, "", errors.New("ไม่สามารถอ่านไฟล์รูปภาพได้")
+	}
+
+	return rentFlowValidateImageBlob(blob)
 }
 
 func rentFlowSendImageBlob(c *gin.Context, mimeType string, blob []byte) {

@@ -153,6 +153,7 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 		return
 	}
 
+	now := time.Now()
 	updates := map[string]interface{}{
 		"owner_user_id": ownerUserID,
 		"owner_email":   user.Email,
@@ -160,7 +161,7 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 		"domain_slug":   domainSlug,
 		"public_domain": publicDomain,
 		"status":        "active",
-		"updated_at":    time.Now(),
+		"updated_at":    now,
 	}
 	if existing.Plan == "" {
 		updates["plan"] = "starter"
@@ -176,6 +177,7 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 
 	if err := config.DB.Model(&models.RentFlowTenant{}).
 		Where("id = ?", existing.ID).
+		Select(rentFlowUpdateColumns(updates)).
 		Updates(updates).Error; err != nil {
 		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถบันทึกข้อมูลร้านได้")
 		return
@@ -187,6 +189,7 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 	existing.DomainSlug = domainSlug
 	existing.PublicDomain = publicDomain
 	existing.Status = "active"
+	existing.UpdatedAt = now
 	if existing.Plan == "" {
 		existing.Plan = "starter"
 	}
@@ -199,9 +202,19 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 		existing.PromoImageBlob = promoImageBlob
 	}
 
+	_ = config.DB.Where("id = ?", existing.ID).First(&existing).Error
+
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowBranchesCachePrefix())
 	rentFlowSuccess(c, http.StatusOK, "บันทึกข้อมูลร้านสำเร็จ", rentFlowOwnerTenantResponse(existing))
+}
+
+func rentFlowUpdateColumns(updates map[string]interface{}) []string {
+	columns := make([]string, 0, len(updates))
+	for key := range updates {
+		columns = append(columns, key)
+	}
+	return columns
 }
 
 func rentFlowRequireTenant(c *gin.Context) (*models.RentFlowTenant, bool) {

@@ -467,6 +467,10 @@ func rentFlowBranchDisplayName(branch models.RentFlowBranch) string {
 		return address
 	}
 
+	if name != "" {
+		return "สาขาหลัก"
+	}
+
 	return "สาขาหลัก"
 }
 
