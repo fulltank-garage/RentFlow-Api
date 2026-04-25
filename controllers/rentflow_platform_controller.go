@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"errors"
 	"net/http"
 	"os"
 	"sort"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	"rentflow-api/config"
 	"rentflow-api/middleware"
 	"rentflow-api/models"
@@ -22,6 +24,7 @@ type rentFlowPlatformTenantItem struct {
 	DomainSlug        string    `json:"domainSlug"`
 	PublicDomain      string    `json:"publicDomain"`
 	Status            string    `json:"status"`
+	BookingMode       string    `json:"bookingMode"`
 	Plan              string    `json:"plan"`
 	Cars              int       `json:"cars"`
 	TotalBookings     int       `json:"totalBookings"`
@@ -117,6 +120,154 @@ func RentFlowAdminListPartners(c *gin.Context) {
 	rentFlowSuccess(c, http.StatusOK, "ดึงข้อมูลเจ้าของร้านสำเร็จ", gin.H{
 		"items": items,
 		"total": len(items),
+	})
+}
+
+func RentFlowAdminCreatePartner(c *gin.Context) {
+	if !rentFlowRequirePlatformAdmin(c) {
+		return
+	}
+
+	var payload struct {
+		Username   string `json:"username"`
+		Password   string `json:"password"`
+		FirstName  string `json:"firstName"`
+		LastName   string `json:"lastName"`
+		Phone      string `json:"phone"`
+		ShopName   string `json:"shopName"`
+		DomainSlug string `json:"domainSlug"`
+		Plan       string `json:"plan"`
+		Status     string `json:"status"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		rentFlowError(c, http.StatusBadRequest, "ข้อมูลเจ้าของร้านไม่ถูกต้อง")
+		return
+	}
+
+	username := strings.TrimSpace(strings.ToLower(payload.Username))
+	firstName := strings.TrimSpace(payload.FirstName)
+	lastName := strings.TrimSpace(payload.LastName)
+	phone := strings.TrimSpace(payload.Phone)
+	shopName := strings.TrimSpace(payload.ShopName)
+	domainSlug := rentFlowNormalizeDomainSlug(payload.DomainSlug)
+	plan := rentFlowNormalizePlatformPartnerPlan(payload.Plan)
+	status := rentFlowNormalizePlatformTenantStatus(payload.Status)
+	fullName := strings.TrimSpace(firstName + " " + lastName)
+
+	if len(username) < 3 || len(strings.TrimSpace(payload.Password)) < 8 || len(firstName) < 2 || len(lastName) < 2 || shopName == "" {
+		rentFlowError(c, http.StatusBadRequest, "กรุณากรอกข้อมูลเจ้าของร้านให้ครบถ้วน")
+		return
+	}
+	if message := rentFlowValidateDomainSlug(domainSlug); message != "" {
+		rentFlowError(c, http.StatusBadRequest, message)
+		return
+	}
+
+	var existingUser models.RentFlowUser
+	userErr := config.DB.Where("username = ? OR email = ?", username, username).First(&existingUser).Error
+	switch {
+	case userErr == nil:
+		rentFlowError(c, http.StatusConflict, "ชื่อผู้ใช้นี้ถูกใช้งานแล้ว")
+		return
+	case !errors.Is(userErr, gorm.ErrRecordNotFound):
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถตรวจสอบชื่อผู้ใช้ได้")
+		return
+	}
+
+	publicDomain := rentFlowPublicDomain(domainSlug)
+	var existingTenant models.RentFlowTenant
+	tenantErr := config.DB.Where("domain_slug = ? OR public_domain = ?", domainSlug, publicDomain).First(&existingTenant).Error
+	switch {
+	case tenantErr == nil:
+		rentFlowError(c, http.StatusConflict, "โดเมนร้านนี้ถูกใช้งานแล้ว")
+		return
+	case !errors.Is(tenantErr, gorm.ErrRecordNotFound):
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถตรวจสอบโดเมนร้านได้")
+		return
+	}
+
+	passwordHash, err := services.HashPasswordIfNeeded(payload.Password)
+	if err != nil {
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถสร้างรหัสผ่านได้")
+		return
+	}
+
+	userID := services.NewID("usr")
+	tenantID := services.NewID("tnt")
+	memberID := services.NewID("mbr")
+	now := time.Now()
+
+	user := models.RentFlowUser{
+		ID:           userID,
+		Username:     username,
+		FirstName:    firstName,
+		LastName:     lastName,
+		Name:         fullName,
+		Email:        username,
+		Phone:        phone,
+		PasswordHash: passwordHash,
+	}
+	tenant := models.RentFlowTenant{
+		ID:           tenantID,
+		OwnerUserID:  &userID,
+		OwnerEmail:   username,
+		ShopName:     shopName,
+		DomainSlug:   domainSlug,
+		PublicDomain: publicDomain,
+		Status:       status,
+		BookingMode:  "payment",
+		Plan:         plan,
+	}
+	member := models.RentFlowTenantMember{
+		ID:        memberID,
+		TenantID:  tenantID,
+		UserID:    userID,
+		Email:     username,
+		Name:      fullName,
+		Role:      "owner",
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	if err := config.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&user).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&tenant).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&member).Error; err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถสร้างเจ้าของร้านได้")
+		return
+	}
+
+	rentFlowAudit(c, tenant.ID, "platform.partner.create", "tenant", tenant.ID, shopName+"|"+username)
+	rentFlowCreateNotification(tenant.ID, &user.ID, user.Email, "บัญชี Partner พร้อมใช้งานแล้ว", "คุณสามารถเข้าสู่ระบบ Partner Dashboard เพื่อจัดการร้านได้ทันที")
+
+	rentFlowSuccess(c, http.StatusCreated, "สร้างเจ้าของร้านสำเร็จ", gin.H{
+		"tenant": rentFlowPlatformTenantItem{
+			ID:                tenant.ID,
+			ShopName:          tenant.ShopName,
+			OwnerName:         user.Name,
+			OwnerEmail:        tenant.OwnerEmail,
+			DomainSlug:        tenant.DomainSlug,
+			PublicDomain:      tenant.PublicDomain,
+			Status:            tenant.Status,
+			BookingMode:       rentFlowNormalizeBookingMode(tenant.BookingMode),
+			Plan:              tenant.Plan,
+			Cars:              0,
+			TotalBookings:     0,
+			BookingsThisMonth: 0,
+			RevenueThisMonth:  0,
+			CreatedAt:         tenant.CreatedAt,
+			UpdatedAt:         tenant.UpdatedAt,
+		},
+		"user": rentFlowUserResponse(user),
 	})
 }
 
@@ -292,6 +443,24 @@ func rentFlowCountCustomDomainStatus(items []models.RentFlowCustomDomain, status
 	return total
 }
 
+func rentFlowNormalizePlatformPartnerPlan(plan string) string {
+	switch strings.TrimSpace(strings.ToLower(plan)) {
+	case "growth", "enterprise":
+		return strings.TrimSpace(strings.ToLower(plan))
+	default:
+		return "starter"
+	}
+}
+
+func rentFlowNormalizePlatformTenantStatus(status string) string {
+	switch strings.TrimSpace(strings.ToLower(status)) {
+	case "active", "suspended":
+		return strings.TrimSpace(strings.ToLower(status))
+	default:
+		return "pending"
+	}
+}
+
 func rentFlowPlatformHosts() gin.H {
 	rootDomain := rentFlowRootDomain()
 	target := strings.TrimSpace(os.Getenv("RENTFLOW_STOREFRONT_TARGET"))
@@ -409,6 +578,7 @@ func rentFlowPlatformTenantItems() ([]rentFlowPlatformTenantItem, error) {
 			DomainSlug:        tenant.DomainSlug,
 			PublicDomain:      tenant.PublicDomain,
 			Status:            tenant.Status,
+			BookingMode:       rentFlowNormalizeBookingMode(tenant.BookingMode),
 			Plan:              tenant.Plan,
 			Cars:              carCount[tenant.ID],
 			TotalBookings:     totalBookings[tenant.ID],

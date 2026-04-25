@@ -154,6 +154,7 @@ func RentFlowCreateBooking(c *gin.Context) {
 	}
 
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
+	rentFlowPublishBookingRealtime(services.RentFlowRealtimeEventBookingCreated, booking)
 	rentFlowSuccess(c, http.StatusCreated, "สร้างรายการจองสำเร็จ", rentFlowBookingResponse(booking))
 }
 
@@ -212,6 +213,7 @@ func RentFlowCancelBooking(c *gin.Context) {
 	booking.Status = "cancelled"
 	rentFlowCreateNotification(booking.TenantID, booking.UserID, booking.CustomerEmail, "ยกเลิกการจอง", "การจอง "+booking.BookingCode+" ถูกยกเลิกแล้ว")
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
+	rentFlowPublishBookingRealtime(services.RentFlowRealtimeEventBookingCancelled, *booking)
 	rentFlowSuccess(c, http.StatusOK, "ยกเลิกรายการจองสำเร็จ", rentFlowBookingResponse(*booking))
 }
 
@@ -293,6 +295,9 @@ func RentFlowCreatePayment(c *gin.Context) {
 	}
 
 	rentFlowCreateNotification(tenant.ID, booking.UserID, booking.CustomerEmail, "ชำระเงินสำเร็จ", "การจอง "+booking.BookingCode+" ชำระเงินเรียบร้อยแล้ว")
+	booking.Status = "paid"
+	rentFlowPublishPaymentRealtime(services.RentFlowRealtimeEventPaymentCreated, payment)
+	rentFlowPublishBookingRealtime(services.RentFlowRealtimeEventBookingUpdated, booking)
 	rentFlowSuccess(c, http.StatusCreated, "สร้างรายการชำระเงินสำเร็จ", rentFlowPaymentResponse(payment))
 }
 
@@ -634,4 +639,21 @@ func rentFlowCreateNotification(tenantID string, userID *string, userEmail, titl
 		Body:      message,
 		Status:    "queued",
 	}).Error
+	userIDValue := ""
+	if userID != nil {
+		userIDValue = *userID
+	}
+	services.RentFlowPublishRealtime(services.RentFlowRealtimeEvent{
+		Type:      services.RentFlowRealtimeEventNotificationNew,
+		TenantID:  tenantID,
+		UserID:    userIDValue,
+		UserEmail: notification.UserEmail,
+		EntityID:  notification.ID,
+		Data: gin.H{
+			"id":      notification.ID,
+			"title":   notification.Title,
+			"message": notification.Message,
+			"isRead":  notification.IsRead,
+		},
+	})
 }

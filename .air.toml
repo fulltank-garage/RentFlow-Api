@@ -1,0 +1,33 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+cmd = "go build -o ./tmp/rentflow-api ."
+entrypoint = ["./tmp/rentflow-api"]
+delay = 1000
+exclude_dir = ["tmp", "vendor", ".git"]
+exclude_file = []
+exclude_regex = ["_test.go"]
+follow_symlink = true
+include_ext = ["go", "env"]
+kill_delay = "500ms"
+log = "air-build.log"
+poll = true
+poll_interval = 500
+rerun = false
+send_interrupt = true
+stop_on_error = true
+
+[color]
+app = "green"
+build = "yellow"
+main = "magenta"
+runner = "cyan"
+watcher = "blue"
+
+[log]
+main_only = false
+time = true
+
+[misc]
+clean_on_exit = true

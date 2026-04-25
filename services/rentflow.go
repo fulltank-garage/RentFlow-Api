@@ -20,11 +20,51 @@ import (
 )
 
 const (
-	RentFlowSessionCookieName = "rentflow_session"
-	rentFlowSessionPrefix     = "rentflow:session:"
-	rentFlowCachePrefix       = "rentflow:cache:"
-	defaultSessionTTL         = 7 * 24 * time.Hour
+	RentFlowLegacySessionCookieName  = "rentflow_session"
+	RentFlowWebSessionCookieName     = "rentflow_web_session"
+	RentFlowPartnerSessionCookieName = "rentflow_partner_session"
+	RentFlowAdminSessionCookieName   = "rentflow_admin_session"
+	RentFlowAppHeaderName            = "X-RentFlow-App"
+	RentFlowAppStorefront            = "storefront"
+	RentFlowAppPartner               = "partner"
+	RentFlowAppAdmin                 = "admin"
+	rentFlowSessionPrefix            = "rentflow:session:"
+	rentFlowCachePrefix              = "rentflow:cache:"
+	defaultSessionTTL                = 7 * 24 * time.Hour
 )
+
+func RentFlowNormalizeAppName(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "web", "store", "storefront", "customer":
+		return RentFlowAppStorefront
+	case "partner", "owner":
+		return RentFlowAppPartner
+	case "admin", "platform":
+		return RentFlowAppAdmin
+	default:
+		return RentFlowAppStorefront
+	}
+}
+
+func RentFlowSessionCookieNameForApp(app string) string {
+	switch RentFlowNormalizeAppName(app) {
+	case RentFlowAppPartner:
+		return RentFlowPartnerSessionCookieName
+	case RentFlowAppAdmin:
+		return RentFlowAdminSessionCookieName
+	default:
+		return RentFlowWebSessionCookieName
+	}
+}
+
+func RentFlowSessionCookieNames() []string {
+	return []string{
+		RentFlowWebSessionCookieName,
+		RentFlowPartnerSessionCookieName,
+		RentFlowAdminSessionCookieName,
+		RentFlowLegacySessionCookieName,
+	}
+}
 
 type RentFlowSession struct {
 	UserID    string    `json:"userId"`

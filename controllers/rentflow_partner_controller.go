@@ -24,6 +24,7 @@ type rentFlowPartnerCarPayload struct {
 	Transmission string `json:"transmission"`
 	Fuel         string `json:"fuel"`
 	PricePerDay  int64  `json:"pricePerDay"`
+	UnitCount    int    `json:"unitCount"`
 	Description  string `json:"description"`
 	LocationID   string `json:"locationId"`
 	Status       string `json:"status"`
@@ -137,6 +138,7 @@ func RentFlowPartnerCreateCar(c *gin.Context) {
 		return
 	}
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
+	rentFlowPublishCarRealtime(tenant.ID, car.ID, services.RentFlowRealtimeEventCarChanged)
 
 	rentFlowSuccess(c, http.StatusCreated, "เพิ่มรถสำเร็จ", rentFlowPartnerCarResponse(c, tenant, car, nil))
 }
@@ -178,6 +180,7 @@ func RentFlowPartnerUpdateCar(c *gin.Context) {
 		"transmission":  updated.Transmission,
 		"fuel":          updated.Fuel,
 		"price_per_day": updated.PricePerDay,
+		"unit_count":    updated.UnitCount,
 		"description":   updated.Description,
 		"location_id":   updated.LocationID,
 		"status":        updated.Status,
@@ -200,12 +203,14 @@ func RentFlowPartnerUpdateCar(c *gin.Context) {
 	existing.Transmission = updated.Transmission
 	existing.Fuel = updated.Fuel
 	existing.PricePerDay = updated.PricePerDay
+	existing.UnitCount = updated.UnitCount
 	existing.Description = updated.Description
 	existing.LocationID = updated.LocationID
 	existing.Status = updated.Status
 	existing.IsAvailable = updated.IsAvailable
 
 	imageURLs, _ := rentFlowCarImageURLs(c, tenant, []models.RentFlowCar{existing})
+	rentFlowPublishCarRealtime(tenant.ID, existing.ID, services.RentFlowRealtimeEventCarChanged)
 	rentFlowSuccess(c, http.StatusOK, "บันทึกข้อมูลรถสำเร็จ", rentFlowPartnerCarResponse(c, tenant, existing, imageURLs[existing.ID]))
 }
 
@@ -244,6 +249,7 @@ func RentFlowPartnerDeleteCar(c *gin.Context) {
 	}
 
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
+	rentFlowPublishCarRealtime(tenant.ID, carID, services.RentFlowRealtimeEventCarChanged)
 	rentFlowSuccess(c, http.StatusOK, "ลบรถสำเร็จ", nil)
 }
 
@@ -266,6 +272,7 @@ func RentFlowPartnerDeleteCarImage(c *gin.Context) {
 	}
 
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
+	rentFlowPublishCarRealtime(tenant.ID, c.Param("carId"), services.RentFlowRealtimeEventCarChanged)
 	rentFlowSuccess(c, http.StatusOK, "ลบรูปภาพรถสำเร็จ", nil)
 }
 
@@ -304,6 +311,7 @@ func RentFlowPartnerReorderCarImages(c *gin.Context) {
 
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
 	rentFlowAudit(c, tenant.ID, "car_image.reorder", "car", c.Param("carId"), strings.Join(payload.ImageIDs, ","))
+	rentFlowPublishCarRealtime(tenant.ID, c.Param("carId"), services.RentFlowRealtimeEventCarChanged)
 	rentFlowSuccess(c, http.StatusOK, "อัปเดตลำดับรูปภาพสำเร็จ", nil)
 }
 
@@ -347,6 +355,7 @@ func RentFlowPartnerCreateBranch(c *gin.Context) {
 		return
 	}
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowBranchesCachePrefix())
+	rentFlowPublishCarRealtime(tenant.ID, "", services.RentFlowRealtimeEventBranchChanged)
 
 	rentFlowSuccess(c, http.StatusCreated, "เพิ่มสาขาสำเร็จ", branch)
 }
@@ -403,6 +412,7 @@ func RentFlowPartnerUpdateBranch(c *gin.Context) {
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowBranchesCachePrefix())
 
 	updated.CreatedAt = existing.CreatedAt
+	rentFlowPublishCarRealtime(tenant.ID, "", services.RentFlowRealtimeEventBranchChanged)
 	rentFlowSuccess(c, http.StatusOK, "บันทึกข้อมูลสาขาสำเร็จ", updated)
 }
 
@@ -422,6 +432,7 @@ func RentFlowPartnerDeleteBranch(c *gin.Context) {
 		return
 	}
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowBranchesCachePrefix())
+	rentFlowPublishCarRealtime(tenant.ID, "", services.RentFlowRealtimeEventBranchChanged)
 
 	rentFlowSuccess(c, http.StatusOK, "ลบสาขาสำเร็จ", nil)
 }
@@ -447,6 +458,11 @@ func rentFlowBuildPartnerCarFromPayload(c *gin.Context, tenantID, carID string, 
 	transmission := strings.TrimSpace(payload.Transmission)
 	fuel := strings.TrimSpace(payload.Fuel)
 	status := rentFlowNormalizeCarStatus(payload.Status)
+
+	unitCount := payload.UnitCount
+	if unitCount < 1 {
+		unitCount = 1
+	}
 
 	if name == "" || brand == "" || model == "" || payload.Year < 1980 || carType == "" || payload.Seats < 1 || transmission == "" || fuel == "" || payload.PricePerDay < 0 {
 		rentFlowError(c, http.StatusBadRequest, "กรุณากรอกข้อมูลรถให้ครบถ้วน")
@@ -478,6 +494,7 @@ func rentFlowBuildPartnerCarFromPayload(c *gin.Context, tenantID, carID string, 
 		Transmission: transmission,
 		Fuel:         fuel,
 		PricePerDay:  payload.PricePerDay,
+		UnitCount:    unitCount,
 		Description:  strings.TrimSpace(payload.Description),
 		LocationID:   locationID,
 		Status:       status,
@@ -565,28 +582,47 @@ func rentFlowPartnerCarResponse(c *gin.Context, tenant *models.RentFlowTenant, c
 	if len(images) > 0 {
 		primaryImage = images[0]
 	}
+	unitCount := rentFlowCarUnitCount(car)
+	availableUnits := unitCount
+	reservedUnits := 0
+	availabilityStatus := rentFlowNormalizeCarStatus(car.Status)
+	if car.Status == "available" {
+		now := time.Now()
+		if availability, err := rentFlowCarAvailability(tenant.ID, car, now, now.Add(24*time.Hour)); err == nil {
+			unitCount = availability.UnitCount
+			availableUnits = availability.AvailableUnits
+			reservedUnits = availability.ReservedUnits
+			if !availability.Available {
+				availabilityStatus = "booked"
+			}
+		}
+	}
 
 	return gin.H{
-		"id":           car.ID,
-		"tenantId":     car.TenantID,
-		"name":         car.Name,
-		"brand":        car.Brand,
-		"model":        car.Model,
-		"year":         car.Year,
-		"type":         car.Type,
-		"seats":        car.Seats,
-		"transmission": car.Transmission,
-		"fuel":         car.Fuel,
-		"pricePerDay":  car.PricePerDay,
-		"description":  car.Description,
-		"locationId":   car.LocationID,
-		"status":       car.Status,
-		"isAvailable":  car.IsAvailable,
-		"image":        primaryImage,
-		"imageUrl":     primaryImage,
-		"images":       images,
-		"createdAt":    car.CreatedAt,
-		"updatedAt":    car.UpdatedAt,
+		"id":                 car.ID,
+		"tenantId":           car.TenantID,
+		"name":               car.Name,
+		"brand":              car.Brand,
+		"model":              car.Model,
+		"year":               car.Year,
+		"type":               car.Type,
+		"seats":              car.Seats,
+		"transmission":       car.Transmission,
+		"fuel":               car.Fuel,
+		"pricePerDay":        car.PricePerDay,
+		"unitCount":          unitCount,
+		"reservedUnits":      reservedUnits,
+		"availableUnits":     availableUnits,
+		"description":        car.Description,
+		"locationId":         car.LocationID,
+		"status":             car.Status,
+		"availabilityStatus": availabilityStatus,
+		"isAvailable":        car.IsAvailable && availableUnits > 0,
+		"image":              primaryImage,
+		"imageUrl":           primaryImage,
+		"images":             images,
+		"createdAt":          car.CreatedAt,
+		"updatedAt":          car.UpdatedAt,
 	}
 }
 

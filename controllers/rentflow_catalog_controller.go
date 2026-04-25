@@ -34,6 +34,13 @@ var rentFlowAllowedImageTypes = map[string]struct{}{
 	"image/webp": {},
 }
 
+type rentFlowCarAvailabilitySnapshot struct {
+	UnitCount      int
+	ReservedUnits  int
+	AvailableUnits int
+	Available      bool
+}
+
 func RentFlowGetCars(c *gin.Context) {
 	marketplace := rentFlowIsMarketplaceRequest(c)
 
@@ -89,7 +96,13 @@ func RentFlowGetCars(c *gin.Context) {
 	}
 
 	var cars []models.RentFlowCar
-	query := config.DB.Where("tenant_id IN ? AND is_available = ? AND status = ?", tenantIDs, true, "available")
+	query := config.DB.Where(
+		"tenant_id IN ? AND ((is_available = ? AND status = ?) OR status = ?)",
+		tenantIDs,
+		true,
+		"available",
+		"rented",
+	)
 
 	if location := strings.TrimSpace(c.Query("location")); location != "" {
 		locationIDs := rentFlowLocationIDsForFilter(tenantIDs, location)
@@ -131,18 +144,27 @@ func RentFlowGetCars(c *gin.Context) {
 	returnDate, returnErr := services.ParseDateTime(c.Query("returnDate"))
 
 	visibleCars := make([]models.RentFlowCar, 0, len(cars))
+	availabilityByCarID := make(map[string]rentFlowCarAvailabilitySnapshot, len(cars))
 	for _, car := range cars {
+		snapshot := rentFlowBaseCarAvailability(car)
 		if pickupErr == nil && returnErr == nil && pickupDate.Before(returnDate) {
-			available, err := rentFlowCarIsAvailable(car.TenantID, car.ID, pickupDate, returnDate)
+			nextSnapshot, err := rentFlowCarAvailability(car.TenantID, car, pickupDate, returnDate)
 			if err != nil {
 				rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถตรวจสอบคิวรถได้")
 				return
 			}
-			if !available {
-				continue
+			snapshot = nextSnapshot
+		} else {
+			now := time.Now()
+			nextSnapshot, err := rentFlowCarAvailability(car.TenantID, car, now, now.Add(24*time.Hour))
+			if err != nil {
+				rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถตรวจสอบคิวรถได้")
+				return
 			}
+			snapshot = nextSnapshot
 		}
 
+		availabilityByCarID[car.ID] = snapshot
 		visibleCars = append(visibleCars, car)
 	}
 
@@ -160,6 +182,7 @@ func RentFlowGetCars(c *gin.Context) {
 		if len(images) > 0 {
 			primaryImage = images[0]
 		}
+		availability := availabilityByCarID[car.ID]
 
 		responseItems = append(responseItems, gin.H{
 			"id":                  car.ID,
@@ -175,11 +198,14 @@ func RentFlowGetCars(c *gin.Context) {
 			"fuel":                car.Fuel,
 			"grade":               rentFlowCarGrade(car.ID),
 			"pricePerDay":         car.PricePerDay,
+			"unitCount":           availability.UnitCount,
+			"reservedUnits":       availability.ReservedUnits,
+			"availableUnits":      availability.AvailableUnits,
 			"imageUrl":            primaryImage,
 			"images":              images,
 			"description":         car.Description,
 			"locationId":          car.LocationID,
-			"isAvailable":         car.IsAvailable,
+			"isAvailable":         availability.Available,
 			"status":              car.Status,
 			"createdAt":           car.CreatedAt,
 			"updatedAt":           car.UpdatedAt,
@@ -188,6 +214,7 @@ func RentFlowGetCars(c *gin.Context) {
 			"publicDomain":        tenant.PublicDomain,
 			"logoUrl":             rentFlowTenantLogoURL(tenant),
 			"promoImageUrl":       rentFlowTenantPromoImageURL(tenant),
+			"bookingMode":         rentFlowNormalizeBookingMode(tenant.BookingMode),
 			"lineOfficialAccount": rentFlowPublicLineSummary(car.TenantID),
 		})
 	}
@@ -331,6 +358,7 @@ func RentFlowUploadCarImages(c *gin.Context) {
 		items = append(items, rentFlowCarImageResponse(c, tenant, image))
 	}
 
+	rentFlowPublishCarRealtime(tenant.ID, carID, services.RentFlowRealtimeEventCarChanged)
 	rentFlowSuccess(c, http.StatusCreated, "อัปโหลดรูปภาพสำเร็จ", gin.H{
 		"items": items,
 		"total": len(items),
@@ -611,7 +639,7 @@ func RentFlowCheckAvailability(c *gin.Context) {
 		return
 	}
 
-	available, err := rentFlowCarIsAvailable(tenant.ID, payload.CarID, pickupDate, returnDate)
+	availability, err := rentFlowCarAvailability(tenant.ID, car, pickupDate, returnDate)
 	if err != nil {
 		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถตรวจสอบคิวรถได้")
 		return
@@ -625,7 +653,10 @@ func RentFlowCheckAvailability(c *gin.Context) {
 
 	rentFlowSuccess(c, http.StatusOK, "ตรวจสอบคิวรถสำเร็จ", gin.H{
 		"carId":            payload.CarID,
-		"available":        available,
+		"available":        availability.Available,
+		"unitCount":        availability.UnitCount,
+		"reservedUnits":    availability.ReservedUnits,
+		"availableUnits":   availability.AvailableUnits,
 		"unavailableDates": unavailableDates,
 	})
 }
@@ -644,22 +675,89 @@ func RentFlowGetUnavailableDates(c *gin.Context) {
 	rentFlowSuccess(c, http.StatusOK, "ดึงวันไม่ว่างสำเร็จ", dates)
 }
 
-func rentFlowCarIsAvailable(tenantID, carID string, pickupDate, returnDate time.Time) (bool, error) {
-	var count int64
-	err := config.DB.Model(&models.RentFlowBooking{}).
-		Where("tenant_id = ? AND car_id = ?", tenantID, carID).
-		Where("status IN ?", []string{"pending", "confirmed", "paid"}).
-		Where("pickup_date < ? AND return_date > ?", returnDate, pickupDate).
-		Count(&count).Error
-	if err != nil || count > 0 {
-		return count == 0, err
+func rentFlowNormalizeBookingMode(mode string) string {
+	switch strings.TrimSpace(strings.ToLower(mode)) {
+	case "chat", "chat_first", "line", "line_chat":
+		return "chat"
+	default:
+		return "payment"
+	}
+}
+
+func rentFlowCarUnitCount(car models.RentFlowCar) int {
+	if car.UnitCount < 1 {
+		return 1
+	}
+	return car.UnitCount
+}
+
+func rentFlowBaseCarAvailability(car models.RentFlowCar) rentFlowCarAvailabilitySnapshot {
+	unitCount := rentFlowCarUnitCount(car)
+	available := car.IsAvailable && strings.TrimSpace(strings.ToLower(car.Status)) == "available"
+	availableUnits := unitCount
+	if !available {
+		availableUnits = 0
+	}
+	return rentFlowCarAvailabilitySnapshot{
+		UnitCount:      unitCount,
+		ReservedUnits:  0,
+		AvailableUnits: availableUnits,
+		Available:      available,
+	}
+}
+
+func rentFlowCarAvailability(tenantID string, car models.RentFlowCar, pickupDate, returnDate time.Time) (rentFlowCarAvailabilitySnapshot, error) {
+	base := rentFlowBaseCarAvailability(car)
+	if !base.Available {
+		return base, nil
 	}
 
+	var reservedCount int64
+	err := config.DB.Model(&models.RentFlowBooking{}).
+		Where("tenant_id = ? AND car_id = ?", tenantID, car.ID).
+		Where("status IN ?", []string{"pending", "confirmed", "paid"}).
+		Where("pickup_date < ? AND return_date > ?", returnDate, pickupDate).
+		Count(&reservedCount).Error
+	if err != nil {
+		return base, err
+	}
+
+	var blockCount int64
 	err = config.DB.Model(&models.RentFlowAvailabilityBlock{}).
-		Where("tenant_id = ? AND (car_id = ? OR car_id = '')", tenantID, carID).
+		Where("tenant_id = ? AND (car_id = ? OR car_id = '')", tenantID, car.ID).
 		Where("start_date < ? AND end_date > ?", returnDate, pickupDate).
-		Count(&count).Error
-	return count == 0, err
+		Count(&blockCount).Error
+	if err != nil {
+		return base, err
+	}
+	if blockCount > 0 {
+		return rentFlowCarAvailabilitySnapshot{
+			UnitCount:      base.UnitCount,
+			ReservedUnits:  int(reservedCount),
+			AvailableUnits: 0,
+			Available:      false,
+		}, nil
+	}
+
+	availableUnits := base.UnitCount - int(reservedCount)
+	if availableUnits < 0 {
+		availableUnits = 0
+	}
+	return rentFlowCarAvailabilitySnapshot{
+		UnitCount:      base.UnitCount,
+		ReservedUnits:  int(reservedCount),
+		AvailableUnits: availableUnits,
+		Available:      availableUnits > 0,
+	}, nil
+}
+
+func rentFlowCarIsAvailable(tenantID, carID string, pickupDate, returnDate time.Time) (bool, error) {
+	var car models.RentFlowCar
+	if err := config.DB.Where("tenant_id = ? AND id = ?", tenantID, carID).First(&car).Error; err != nil {
+		return false, err
+	}
+	availability, err := rentFlowCarAvailability(tenantID, car, pickupDate, returnDate)
+	return availability.Available, err
 }
 
 func rentFlowUnavailableDates(tenantID, carID string) ([]string, error) {

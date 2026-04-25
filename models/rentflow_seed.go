@@ -19,6 +19,7 @@ func SeedRentFlowData(db *gorm.DB) error {
 		DomainSlug:   "fulltank",
 		PublicDomain: "fulltank.rentflow.com",
 		Status:       "active",
+		BookingMode:  "payment",
 		Plan:         "starter",
 	}
 	if err := db.Where("id = ?", defaultTenant.ID).Assign(defaultTenant).FirstOrCreate(&RentFlowTenant{}).Error; err != nil {
@@ -118,6 +119,7 @@ func SeedRentFlowData(db *gorm.DB) error {
 			Transmission: "Auto",
 			Fuel:         "Gasoline",
 			PricePerDay:  1290,
+			UnitCount:    3,
 			Description:  "ซีดานขับสบาย เหมาะกับการใช้งานในเมืองและเดินทางต่างจังหวัดแบบคล่องตัว",
 			LocationID:   "bangkok",
 			Status:       "available",
@@ -137,6 +139,7 @@ func SeedRentFlowData(db *gorm.DB) error {
 			Transmission: "Auto",
 			Fuel:         "Hybrid",
 			PricePerDay:  1490,
+			UnitCount:    2,
 			Description:  "ปลั๊กอินไฮบริดที่สมดุลระหว่างความประหยัดและสมรรถนะ",
 			LocationID:   "chiang-mai",
 			Status:       "available",
@@ -154,6 +157,7 @@ func SeedRentFlowData(db *gorm.DB) error {
 			Transmission: "Auto",
 			Fuel:         "Gasoline",
 			PricePerDay:  1990,
+			UnitCount:    2,
 			Description:  "SUV สมรรถนะสูง เหมาะกับทริปยาวและการขับขึ้นเขา",
 			LocationID:   "phuket",
 			Status:       "available",
@@ -171,6 +175,7 @@ func SeedRentFlowData(db *gorm.DB) error {
 			Transmission: "Auto",
 			Fuel:         "EV",
 			PricePerDay:  1590,
+			UnitCount:    2,
 			Description:  "ซีดานไฟฟ้าล้วน ขับเงียบ นุ่ม และอัดแน่นด้วยเทคโนโลยี",
 			LocationID:   "pattaya",
 			Status:       "available",
@@ -188,6 +193,7 @@ func SeedRentFlowData(db *gorm.DB) error {
 			Transmission: "Auto",
 			Fuel:         "EV",
 			PricePerDay:  1790,
+			UnitCount:    2,
 			Description:  "ซีดานไฟฟ้าแรงจัด ตอบโจทย์ลูกค้าที่ต้องการรถพรีเมียม",
 			LocationID:   "bangkok",
 			Status:       "available",
@@ -205,6 +211,7 @@ func SeedRentFlowData(db *gorm.DB) error {
 			Transmission: "Auto",
 			Fuel:         "EV",
 			PricePerDay:  1890,
+			UnitCount:    1,
 			Description:  "แฟลกชิพซีดานหรู เหมาะกับลูกค้าที่ต้องการประสบการณ์ระดับพรีเมียม",
 			LocationID:   "chiang-mai",
 			Status:       "available",
@@ -247,6 +254,16 @@ func backfillRentFlowDefaultTenant(db *gorm.DB, tenantID string) error {
 	if err := db.Model(&RentFlowCar{}).
 		Where("status = '' OR status IS NULL").
 		Update("status", "available").Error; err != nil {
+		return err
+	}
+	if err := db.Model(&RentFlowCar{}).
+		Where("unit_count <= 0 OR unit_count IS NULL").
+		Update("unit_count", 1).Error; err != nil {
+		return err
+	}
+	if err := db.Model(&RentFlowTenant{}).
+		Where("booking_mode = '' OR booking_mode IS NULL").
+		Update("booking_mode", "payment").Error; err != nil {
 		return err
 	}
 

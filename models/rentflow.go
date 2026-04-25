@@ -42,6 +42,7 @@ type RentFlowTenant struct {
 	PromoImageMimeType string         `gorm:"size:80" json:"-"`
 	PromoImageBlob     []byte         `gorm:"type:bytea" json:"-"`
 	Status             string         `gorm:"size:30;index;not null;default:active" json:"status"`
+	BookingMode        string         `gorm:"size:30;not null;default:payment" json:"bookingMode"`
 	Plan               string         `gorm:"size:40;not null;default:starter" json:"plan"`
 	CreatedAt          time.Time      `json:"createdAt"`
 	UpdatedAt          time.Time      `json:"updatedAt"`
@@ -116,6 +117,7 @@ type RentFlowCar struct {
 	Transmission string         `gorm:"size:20;not null" json:"transmission"`
 	Fuel         string         `gorm:"size:20;not null" json:"fuel"`
 	PricePerDay  int64          `gorm:"not null" json:"pricePerDay"`
+	UnitCount    int            `gorm:"not null;default:1" json:"unitCount"`
 	Description  string         `gorm:"type:text" json:"description,omitempty"`
 	LocationID   string         `gorm:"size:40;index;not null" json:"locationId,omitempty"`
 	Status       string         `gorm:"size:20;index;default:available" json:"status"`

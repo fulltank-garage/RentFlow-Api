@@ -85,6 +85,7 @@ func RentFlowPartnerUpdateBookingStatus(c *gin.Context) {
 	rentFlowCreateNotification(tenant.ID, booking.UserID, booking.CustomerEmail, "อัปเดตสถานะการจอง", "การจอง "+booking.BookingCode+" เปลี่ยนสถานะเป็น "+status)
 
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
+	rentFlowPublishBookingRealtime(services.RentFlowRealtimeEventBookingUpdated, booking)
 	rentFlowSuccess(c, http.StatusOK, "อัปเดตการจองสำเร็จ", rentFlowPartnerBookingResponse(booking, rentFlowPartnerCarNames(tenant.ID)[booking.CarID]))
 }
 
@@ -171,6 +172,11 @@ func rentFlowPartnerUpdatePayment(c *gin.Context, status, action string) {
 		return
 	}
 	rentFlowAudit(c, tenant.ID, action, "payment", payment.ID, strings.TrimSpace(payload.Note))
+	if updatedPayment, err := rentFlowPaymentByID(tenant.ID, payment.ID); err == nil {
+		rentFlowPublishPaymentRealtime(services.RentFlowRealtimeEventPaymentUpdated, updatedPayment)
+	} else {
+		rentFlowPublishPaymentRealtime(services.RentFlowRealtimeEventPaymentUpdated, payment)
+	}
 	rentFlowSuccess(c, http.StatusOK, "อัปเดตการชำระเงินสำเร็จ", nil)
 }
 
@@ -311,6 +317,7 @@ func RentFlowPartnerCreateAvailabilityBlock(c *gin.Context) {
 	}
 	rentFlowAudit(c, tenant.ID, "availability_block.create", "availability_block", block.ID, block.Reason)
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
+	rentFlowPublishCarRealtime(tenant.ID, block.CarID, services.RentFlowRealtimeEventAvailabilityChange)
 	rentFlowSuccess(c, http.StatusCreated, "บันทึกวันปิดรับจองสำเร็จ", block)
 }
 
@@ -330,6 +337,7 @@ func RentFlowPartnerDeleteAvailabilityBlock(c *gin.Context) {
 	}
 	rentFlowAudit(c, tenant.ID, "availability_block.delete", "availability_block", c.Param("blockId"), "")
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
+	rentFlowPublishCarRealtime(tenant.ID, "", services.RentFlowRealtimeEventAvailabilityChange)
 	rentFlowSuccess(c, http.StatusOK, "ลบวันปิดรับจองสำเร็จ", nil)
 }
 
@@ -447,23 +455,83 @@ func RentFlowAdminUpdateTenantStatus(c *gin.Context) {
 		return
 	}
 	var payload struct {
-		Status string `json:"status"`
+		Status      string `json:"status"`
+		BookingMode string `json:"bookingMode"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
-		rentFlowError(c, http.StatusBadRequest, "ข้อมูลสถานะร้านไม่ถูกต้อง")
+		rentFlowError(c, http.StatusBadRequest, "ข้อมูลร้านไม่ถูกต้อง")
 		return
 	}
+
+	var tenant models.RentFlowTenant
+	if err := config.DB.Where("id = ?", c.Param("tenantId")).First(&tenant).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			rentFlowError(c, http.StatusNotFound, "ไม่พบร้านที่ต้องการอัปเดต")
+			return
+		}
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถค้นหาข้อมูลร้านได้")
+		return
+	}
+
 	status := strings.TrimSpace(payload.Status)
+	if status == "" {
+		status = tenant.Status
+	}
 	if status != "active" && status != "suspended" && status != "pending" {
 		rentFlowError(c, http.StatusBadRequest, "สถานะร้านไม่ถูกต้อง")
 		return
 	}
-	if err := config.DB.Model(&models.RentFlowTenant{}).Where("id = ?", c.Param("tenantId")).Updates(map[string]interface{}{"status": status, "updated_at": time.Now()}).Error; err != nil {
+
+	bookingMode := rentFlowNormalizeBookingMode(tenant.BookingMode)
+	if strings.TrimSpace(payload.BookingMode) != "" {
+		bookingMode = rentFlowNormalizeBookingMode(payload.BookingMode)
+	}
+
+	now := time.Now()
+	updates := map[string]interface{}{
+		"status":       status,
+		"booking_mode": bookingMode,
+		"updated_at":   now,
+	}
+	if err := config.DB.Model(&models.RentFlowTenant{}).Where("id = ?", tenant.ID).Updates(updates).Error; err != nil {
 		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถอัปเดตร้านได้")
 		return
 	}
-	rentFlowAudit(c, c.Param("tenantId"), "platform.tenant_status", "tenant", c.Param("tenantId"), status)
-	rentFlowSuccess(c, http.StatusOK, "อัปเดตร้านสำเร็จ", nil)
+
+	tenant.Status = status
+	tenant.BookingMode = bookingMode
+	tenant.UpdatedAt = now
+	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
+	rentFlowAudit(c, tenant.ID, "platform.tenant_settings", "tenant", tenant.ID, status+"|"+bookingMode)
+	services.RentFlowPublishRealtime(services.RentFlowRealtimeEvent{
+		Type:     services.RentFlowRealtimeEventTenantUpdated,
+		TenantID: tenant.ID,
+		EntityID: tenant.ID,
+		Data: gin.H{
+			"id":          tenant.ID,
+			"status":      tenant.Status,
+			"bookingMode": tenant.BookingMode,
+			"domainSlug":  tenant.DomainSlug,
+		},
+	})
+	rentFlowSuccess(c, http.StatusOK, "อัปเดตร้านสำเร็จ", gin.H{
+		"tenant": gin.H{
+			"id":           tenant.ID,
+			"shopName":     tenant.ShopName,
+			"domainSlug":   tenant.DomainSlug,
+			"publicDomain": tenant.PublicDomain,
+			"status":       tenant.Status,
+			"bookingMode":  rentFlowNormalizeBookingMode(tenant.BookingMode),
+			"plan":         tenant.Plan,
+			"updatedAt":    tenant.UpdatedAt,
+		},
+	})
+}
+
+func rentFlowPaymentByID(tenantID, paymentID string) (models.RentFlowPayment, error) {
+	var payment models.RentFlowPayment
+	err := config.DB.Where("tenant_id = ? AND id = ?", tenantID, paymentID).First(&payment).Error
+	return payment, err
 }
 
 func rentFlowNormalizeBookingStatus(status string) string {

@@ -22,6 +22,7 @@ func RegisterRentFlowRoutes(r *gin.Engine) {
 	r.GET("/tenants/:tenantSlug/promo-images/:imageId", controllers.RentFlowGetTenantPromoImageByID)
 	r.GET("/platform/settings/public", controllers.RentFlowGetPublicPlatformSettings)
 	r.GET("/platform/settings/marketplace-promo-image", controllers.RentFlowGetMarketplacePromoImage)
+	r.GET("/ws/realtime", controllers.RentFlowRealtimeSocket)
 
 	r.GET("/cars", controllers.RentFlowGetCars)
 	r.GET("/cars/:carId/image", controllers.RentFlowGetCarPrimaryImage)
@@ -109,6 +110,7 @@ func RegisterRentFlowRoutes(r *gin.Engine) {
 		protected.GET("/platform/ai/assistant", controllers.RentFlowAdminAssistant)
 		protected.GET("/platform/overview", controllers.RentFlowAdminGetOverview)
 		protected.GET("/platform/partners", controllers.RentFlowAdminListPartners)
+		protected.POST("/platform/partners", controllers.RentFlowAdminCreatePartner)
 		protected.GET("/platform/domains", controllers.RentFlowAdminListDomains)
 		protected.GET("/platform/billing", controllers.RentFlowAdminGetBilling)
 		protected.GET("/platform/security", controllers.RentFlowAdminGetSecurity)

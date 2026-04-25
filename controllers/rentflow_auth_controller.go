@@ -310,7 +310,7 @@ func RentFlowGetMe(c *gin.Context) {
 }
 
 func RentFlowLogout(c *gin.Context) {
-	token, _ := c.Cookie(services.RentFlowSessionCookieName)
+	token := rentFlowSessionTokenFromRequest(c)
 	if token != "" {
 		_ = services.DeleteSession(config.Ctx, token)
 	}

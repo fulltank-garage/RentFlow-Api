@@ -17,7 +17,7 @@ const (
 
 func AttachRentFlowSession() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		token, _ := c.Cookie(services.RentFlowSessionCookieName)
+		token := rentFlowSessionTokenFromRequest(c)
 		if token == "" {
 			authHeader := c.GetHeader("Authorization")
 			if strings.HasPrefix(authHeader, "Bearer ") {
@@ -47,6 +47,34 @@ func AttachRentFlowSession() gin.HandlerFunc {
 		c.Set(rentFlowUserKey, user)
 		c.Next()
 	}
+}
+
+func rentFlowSessionTokenFromRequest(c *gin.Context) string {
+	cookieName := rentFlowSessionCookieNameFromRequest(c)
+	if token, err := c.Cookie(cookieName); err == nil && strings.TrimSpace(token) != "" {
+		return strings.TrimSpace(token)
+	}
+	return ""
+}
+
+func rentFlowSessionCookieNameFromRequest(c *gin.Context) string {
+	app := strings.TrimSpace(c.Query("app"))
+	if app == "" {
+		app = strings.TrimSpace(c.GetHeader(services.RentFlowAppHeaderName))
+	}
+	if app == "" {
+		path := c.Request.URL.Path
+		switch {
+		case strings.HasPrefix(path, "/platform"):
+			app = services.RentFlowAppAdmin
+		case strings.HasPrefix(path, "/partner"), path == "/tenants/me":
+			app = services.RentFlowAppPartner
+		default:
+			app = services.RentFlowAppStorefront
+		}
+	}
+
+	return services.RentFlowSessionCookieNameForApp(app)
 }
 
 func RequireRentFlowSession() gin.HandlerFunc {

@@ -83,6 +83,7 @@ func RentFlowPartnerUpdateSupportTicket(c *gin.Context) {
 	}
 
 	rentFlowAudit(c, tenant.ID, "support.ticket.update", "support_ticket", ticket.ID, ticket.Status+"|"+ticket.Priority+"|"+ticket.OwnerEmail)
+	rentFlowPublishSupportRealtime(tenant.ID, ticket.ID, services.RentFlowRealtimeEventSupportChanged)
 	rentFlowSuccess(c, http.StatusOK, "อัปเดต ticket สำเร็จ", gin.H{
 		"id":         ticket.ID,
 		"status":     ticket.Status,
@@ -202,6 +203,7 @@ func RentFlowPartnerCreateSupportMessage(c *gin.Context) {
 	}
 
 	rentFlowAudit(c, tenant.ID, "support.message.create", "support_ticket", ticket.ID, messageFrom)
+	rentFlowPublishSupportRealtime(tenant.ID, ticket.ID, services.RentFlowRealtimeEventSupportChanged)
 	rentFlowSuccess(c, http.StatusCreated, "บันทึกข้อความซัพพอร์ตสำเร็จ", gin.H{
 		"id":         message.ID,
 		"fromType":   message.FromType,
@@ -441,6 +443,7 @@ func rentFlowSupportIngestLineEvent(tenant *models.RentFlowTenant, channel *mode
 		Status:      "received",
 		ProviderRef: providerRef,
 	}).Error
+	rentFlowPublishSupportRealtime(tenant.ID, ticket.ID, services.RentFlowRealtimeEventSupportChanged)
 }
 
 func rentFlowLineGetUserProfile(accessToken, userID string) (*rentFlowLineUserProfile, error) {

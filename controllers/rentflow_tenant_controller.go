@@ -271,6 +271,7 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 			PromoImageMimeType: promoImageMimeType,
 			PromoImageBlob:     promoImageBlob,
 			Status:             "active",
+			BookingMode:        "payment",
 			Plan:               "starter",
 		}
 		if err := config.DB.Create(&tenant).Error; err != nil {
@@ -310,6 +311,9 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 	if existing.Plan == "" {
 		updates["plan"] = "starter"
 	}
+	if existing.BookingMode == "" {
+		updates["booking_mode"] = "payment"
+	}
 	if logoProvided {
 		updates["logo_mime_type"] = logoMimeType
 		updates["logo_blob"] = logoBlob
@@ -339,6 +343,9 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 	existing.UpdatedAt = now
 	if existing.Plan == "" {
 		existing.Plan = "starter"
+	}
+	if existing.BookingMode == "" {
+		existing.BookingMode = "payment"
 	}
 	if logoProvided {
 		existing.LogoMimeType = logoMimeType
@@ -651,6 +658,7 @@ func rentFlowPublicTenantResponse(tenant models.RentFlowTenant) gin.H {
 		"promoImageUrl":  promoImageUrl,
 		"promoImageUrls": promoImageUrls,
 		"status":         tenant.Status,
+		"bookingMode":    rentFlowNormalizeBookingMode(tenant.BookingMode),
 		"plan":           tenant.Plan,
 		"createdAt":      tenant.CreatedAt,
 		"updatedAt":      tenant.UpdatedAt,

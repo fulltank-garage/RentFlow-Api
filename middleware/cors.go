@@ -34,7 +34,7 @@ func CORSMiddleware() gin.HandlerFunc {
 		}
 
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, PATCH, DELETE")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization, Cookie, X-RentFlow-Host, X-RentFlow-Tenant, X-RentFlow-Marketplace")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization, Cookie, X-RentFlow-App, X-RentFlow-Host, X-RentFlow-Tenant, X-RentFlow-Marketplace")
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
