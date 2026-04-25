@@ -262,6 +262,47 @@ func DeleteSession(ctx context.Context, token string) error {
 	return nil
 }
 
+func DeleteUserSessions(ctx context.Context, userID string) error {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil
+	}
+
+	if config.RDB != nil {
+		var cursor uint64
+		for {
+			keys, nextCursor, err := config.RDB.Scan(ctx, cursor, rentFlowSessionPrefix+"*", 100).Result()
+			if err != nil {
+				return err
+			}
+			for _, key := range keys {
+				raw, err := config.RDB.Get(ctx, key).Result()
+				if err != nil {
+					continue
+				}
+				var session RentFlowSession
+				if err := json.Unmarshal([]byte(raw), &session); err == nil && session.UserID == userID {
+					_ = config.RDB.Del(ctx, key).Err()
+				}
+			}
+			cursor = nextCursor
+			if cursor == 0 {
+				break
+			}
+		}
+		return nil
+	}
+
+	memorySessionMu.Lock()
+	for token, entry := range memorySessions {
+		if entry.Session.UserID == userID {
+			delete(memorySessions, token)
+		}
+	}
+	memorySessionMu.Unlock()
+	return nil
+}
+
 func CacheKey(parts ...string) string {
 	prefix := rentFlowCachePrefix + "default"
 	keyParts := parts

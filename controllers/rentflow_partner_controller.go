@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sort"
@@ -10,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"rentflow-api/config"
+	"rentflow-api/middleware"
 	"rentflow-api/models"
 	"rentflow-api/services"
 )
@@ -440,6 +442,10 @@ func RentFlowPartnerDeleteBranch(c *gin.Context) {
 func rentFlowRequireOwnerTenant(c *gin.Context) (*models.RentFlowTenant, bool) {
 	tenant, err := rentFlowCurrentUserTenant(c)
 	if err == nil {
+		if permission := rentFlowPartnerPermissionForRequest(c); permission != "" && !rentFlowPartnerUserCan(c, tenant, permission) {
+			rentFlowError(c, http.StatusForbidden, "ไม่มีสิทธิ์ใช้งานส่วนนี้ของร้าน")
+			return nil, false
+		}
 		return tenant, true
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -448,6 +454,117 @@ func rentFlowRequireOwnerTenant(c *gin.Context) (*models.RentFlowTenant, bool) {
 	}
 	rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถตรวจสอบข้อมูลร้านได้")
 	return nil, false
+}
+
+func rentFlowPartnerPermissionForRequest(c *gin.Context) string {
+	path := strings.ToLower(c.FullPath())
+	if path == "" {
+		path = strings.ToLower(c.Request.URL.Path)
+	}
+	method := strings.ToUpper(c.Request.Method)
+	action := "read"
+	if method != http.MethodGet {
+		action = "write"
+	}
+	switch {
+	case strings.Contains(path, "/partner/cars"):
+		return "cars." + action
+	case strings.Contains(path, "/partner/storefront"):
+		return "settings." + action
+	case strings.Contains(path, "/partner/branches"):
+		return "branches." + action
+	case strings.Contains(path, "/partner/bookings"):
+		return "bookings." + action
+	case strings.Contains(path, "/partner/payments"):
+		return "payments." + action
+	case strings.Contains(path, "/partner/customers"):
+		return "customers.read"
+	case strings.Contains(path, "/partner/reports"):
+		return "reports.read"
+	case strings.Contains(path, "/partner/calendar"), strings.Contains(path, "/partner/availability-blocks"):
+		return "availability." + action
+	case strings.Contains(path, "/partner/promotions"):
+		return "promotions." + action
+	case strings.Contains(path, "/partner/addons"):
+		return "addons." + action
+	case strings.Contains(path, "/partner/leads"):
+		return "leads." + action
+	case strings.Contains(path, "/partner/members"):
+		return "members." + action
+	case strings.Contains(path, "/partner/domains"), strings.Contains(path, "/partner/messaging/line"):
+		return "settings." + action
+	case strings.Contains(path, "/partner/support"):
+		return "support." + action
+	case strings.Contains(path, "/partner/audit-logs"):
+		return "audit.read"
+	default:
+		return ""
+	}
+}
+
+func rentFlowPartnerUserCan(c *gin.Context, tenant *models.RentFlowTenant, permission string) bool {
+	user, ok := middleware.CurrentRentFlowUser(c)
+	if !ok || tenant == nil {
+		return false
+	}
+	if tenant.OwnerUserID != nil && strings.TrimSpace(*tenant.OwnerUserID) == user.ID {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(tenant.OwnerEmail), strings.TrimSpace(user.Email)) {
+		return true
+	}
+
+	var member models.RentFlowTenantMember
+	if err := config.DB.Where(
+		"tenant_id = ? AND status = ? AND (user_id = ? OR LOWER(email) = ?)",
+		tenant.ID,
+		"active",
+		user.ID,
+		strings.ToLower(user.Email),
+	).First(&member).Error; err != nil {
+		return false
+	}
+	rolePermissions := rentFlowPartnerDefaultPermissions(member.Role)
+	allowed := map[string]bool{}
+	for _, item := range rolePermissions {
+		allowed[item] = true
+	}
+	var explicit []string
+	if strings.TrimSpace(member.PermissionsJSON) != "" {
+		_ = json.Unmarshal([]byte(member.PermissionsJSON), &explicit)
+	}
+	for _, item := range explicit {
+		allowed[strings.TrimSpace(strings.ToLower(item))] = true
+	}
+	return rentFlowPermissionSetAllows(allowed, permission)
+}
+
+func rentFlowPartnerDefaultPermissions(role string) []string {
+	switch strings.TrimSpace(strings.ToLower(role)) {
+	case "owner":
+		return []string{"*"}
+	case "finance":
+		return []string{"reports.read", "payments.read", "payments.write", "customers.read", "audit.read"}
+	case "support":
+		return []string{"bookings.read", "customers.read", "leads.read", "leads.write", "support.read", "support.write"}
+	default:
+		return []string{"cars.read", "branches.read", "bookings.read", "bookings.write", "availability.read", "availability.write", "support.read", "support.write"}
+	}
+}
+
+func rentFlowPermissionSetAllows(allowed map[string]bool, permission string) bool {
+	permission = strings.TrimSpace(strings.ToLower(permission))
+	if permission == "" {
+		return true
+	}
+	if allowed["*"] || allowed[permission] {
+		return true
+	}
+	if strings.HasSuffix(permission, ".read") {
+		writePermission := strings.TrimSuffix(permission, ".read") + ".write"
+		return allowed[writePermission]
+	}
+	return false
 }
 
 func rentFlowBuildPartnerCarFromPayload(c *gin.Context, tenantID, carID string, payload rentFlowPartnerCarPayload) (models.RentFlowCar, bool) {

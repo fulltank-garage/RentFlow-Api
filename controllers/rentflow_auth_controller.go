@@ -234,6 +234,10 @@ func RentFlowLogin(c *gin.Context) {
 		rentFlowError(c, http.StatusUnauthorized, "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
 		return
 	}
+	if strings.EqualFold(user.Status, "locked") || strings.EqualFold(user.Status, "disabled") {
+		rentFlowError(c, http.StatusForbidden, "บัญชีนี้ถูกระงับการใช้งาน กรุณาติดต่อผู้ดูแลระบบ")
+		return
+	}
 
 	if !services.CheckPassword(payload.Password, user.PasswordHash) {
 		rentFlowError(c, http.StatusUnauthorized, "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")

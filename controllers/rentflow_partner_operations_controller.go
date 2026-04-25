@@ -1,9 +1,12 @@
 package controllers
 
 import (
+	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -81,12 +84,167 @@ func RentFlowPartnerUpdateBookingStatus(c *gin.Context) {
 	if note := strings.TrimSpace(payload.Note); note != "" {
 		booking.Note = note
 	}
+	if status == "active" || status == "review" || status == "completed" || status == "cancelled" {
+		if err := rentFlowSyncCarOperationalStatusTx(config.DB, tenant.ID, booking.CarID); err != nil {
+			rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถอัปเดตสถานะรถได้")
+			return
+		}
+	}
 	rentFlowAudit(c, tenant.ID, "booking.update_status", "booking", booking.ID, "status="+status)
 	rentFlowCreateNotification(tenant.ID, booking.UserID, booking.CustomerEmail, "อัปเดตสถานะการจอง", "การจอง "+booking.BookingCode+" เปลี่ยนสถานะเป็น "+status)
 
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
 	rentFlowPublishBookingRealtime(services.RentFlowRealtimeEventBookingUpdated, booking)
 	rentFlowSuccess(c, http.StatusOK, "อัปเดตการจองสำเร็จ", rentFlowPartnerBookingResponse(booking, rentFlowPartnerCarNames(tenant.ID)[booking.CarID]))
+}
+
+func RentFlowPartnerGetBookingOperations(c *gin.Context) {
+	tenant, ok := rentFlowRequireOwnerTenant(c)
+	if !ok {
+		return
+	}
+
+	booking, ok := rentFlowPartnerLoadBooking(c, tenant.ID, c.Param("bookingId"))
+	if !ok {
+		return
+	}
+
+	var operations []models.RentFlowBookingOperation
+	if err := config.DB.Where("tenant_id = ? AND booking_id = ?", tenant.ID, booking.ID).Order("created_at ASC").Find(&operations).Error; err != nil {
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถดึงประวัติงานรถได้")
+		return
+	}
+	rentFlowSuccess(c, http.StatusOK, "ดึงประวัติงานรถสำเร็จ", gin.H{"items": rentFlowBookingOperationResponses(operations), "total": len(operations)})
+}
+
+func RentFlowPartnerCreateBookingOperation(c *gin.Context) {
+	tenant, ok := rentFlowRequireOwnerTenant(c)
+	if !ok {
+		return
+	}
+	user, _ := middleware.CurrentRentFlowUser(c)
+
+	booking, ok := rentFlowPartnerLoadBooking(c, tenant.ID, c.Param("bookingId"))
+	if !ok {
+		return
+	}
+
+	var payload struct {
+		Type          string   `json:"type"`
+		Checklist     []string `json:"checklist"`
+		ChecklistJSON string   `json:"checklistJson"`
+		Odometer      int64    `json:"odometer"`
+		FuelLevel     string   `json:"fuelLevel"`
+		DamageNote    string   `json:"damageNote"`
+		FineAmount    int64    `json:"fineAmount"`
+		StaffNote     string   `json:"staffNote"`
+		NextStatus    string   `json:"nextStatus"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		rentFlowError(c, http.StatusBadRequest, "ข้อมูลงานรถไม่ถูกต้อง")
+		return
+	}
+
+	operationType := rentFlowNormalizeBookingOperationType(payload.Type)
+	if operationType == "" {
+		rentFlowError(c, http.StatusBadRequest, "ประเภทงานรถไม่ถูกต้อง")
+		return
+	}
+	checklistJSON := strings.TrimSpace(payload.ChecklistJSON)
+	if checklistJSON == "" && len(payload.Checklist) > 0 {
+		if raw, err := json.Marshal(payload.Checklist); err == nil {
+			checklistJSON = string(raw)
+		}
+	}
+
+	operation := models.RentFlowBookingOperation{
+		ID:            services.NewID("bop"),
+		TenantID:      tenant.ID,
+		BookingID:     booking.ID,
+		Type:          operationType,
+		ChecklistJSON: checklistJSON,
+		Odometer:      payload.Odometer,
+		FuelLevel:     strings.TrimSpace(payload.FuelLevel),
+		DamageNote:    strings.TrimSpace(payload.DamageNote),
+		FineAmount:    payload.FineAmount,
+		StaffNote:     strings.TrimSpace(payload.StaffNote),
+		CreatedBy:     user.ID,
+	}
+
+	nextStatus := rentFlowNormalizeBookingStatus(payload.NextStatus)
+	if nextStatus == "" {
+		nextStatus = rentFlowBookingStatusForOperation(operationType, booking.Status)
+	}
+
+	if err := config.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&operation).Error; err != nil {
+			return err
+		}
+		if nextStatus != "" && nextStatus != booking.Status {
+			if err := tx.Model(&models.RentFlowBooking{}).Where("tenant_id = ? AND id = ?", tenant.ID, booking.ID).Updates(map[string]interface{}{
+				"status":     nextStatus,
+				"updated_at": time.Now(),
+			}).Error; err != nil {
+				return err
+			}
+			booking.Status = nextStatus
+		}
+		if nextStatus == "active" || nextStatus == "review" || nextStatus == "completed" || nextStatus == "cancelled" {
+			if err := rentFlowSyncCarOperationalStatusTx(tx, tenant.ID, booking.CarID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถบันทึกงานรถได้")
+		return
+	}
+
+	rentFlowAudit(c, tenant.ID, "booking.operation.create", "booking_operation", operation.ID, operationType)
+	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
+	rentFlowPublishBookingRealtime(services.RentFlowRealtimeEventBookingUpdated, booking)
+	rentFlowPublishCarRealtime(tenant.ID, booking.CarID, services.RentFlowRealtimeEventAvailabilityChange)
+	rentFlowSuccess(c, http.StatusCreated, "บันทึกงานรถสำเร็จ", gin.H{
+		"operation": rentFlowBookingOperationResponse(operation),
+		"booking":   rentFlowPartnerBookingResponse(booking, rentFlowPartnerCarNames(tenant.ID)[booking.CarID]),
+	})
+}
+
+func rentFlowSyncCarOperationalStatusTx(tx *gorm.DB, tenantID, carID string) error {
+	if strings.TrimSpace(carID) == "" {
+		return nil
+	}
+
+	var car models.RentFlowCar
+	if err := tx.Where("tenant_id = ? AND id = ?", tenantID, carID).First(&car).Error; err != nil {
+		return err
+	}
+
+	currentStatus := strings.TrimSpace(strings.ToLower(car.Status))
+	if currentStatus == "maintenance" || currentStatus == "hidden" {
+		return nil
+	}
+
+	var activeCount int64
+	if err := tx.Model(&models.RentFlowBooking{}).
+		Where("tenant_id = ? AND car_id = ?", tenantID, carID).
+		Where("status IN ?", []string{"active", "review"}).
+		Count(&activeCount).Error; err != nil {
+		return err
+	}
+
+	status := "available"
+	isAvailable := true
+	if activeCount >= int64(rentFlowCarUnitCount(car)) {
+		status = "rented"
+		isAvailable = false
+	}
+
+	return tx.Model(&models.RentFlowCar{}).Where("tenant_id = ? AND id = ?", tenantID, carID).Updates(map[string]interface{}{
+		"status":       status,
+		"is_available": isAvailable,
+		"updated_at":   time.Now(),
+	}).Error
 }
 
 func RentFlowPartnerGetPayments(c *gin.Context) {
@@ -247,6 +405,47 @@ func RentFlowPartnerGetReports(c *gin.Context) {
 	rentFlowSuccess(c, http.StatusOK, "ดึงรายงานสำเร็จ", rentFlowBuildPartnerDashboard(c, tenant, cars, branches, bookings, payments, reviews))
 }
 
+func RentFlowPartnerExportReports(c *gin.Context) {
+	tenant, ok := rentFlowRequireOwnerTenant(c)
+	if !ok {
+		return
+	}
+
+	query := config.DB.Where("tenant_id = ?", tenant.ID)
+	if from, err := services.ParseDateTime(c.Query("from")); err == nil {
+		query = query.Where("created_at >= ?", from)
+	}
+	if to, err := services.ParseDateTime(c.Query("to")); err == nil {
+		query = query.Where("created_at <= ?", to)
+	}
+
+	var bookings []models.RentFlowBooking
+	if err := query.Order("created_at DESC").Find(&bookings).Error; err != nil {
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถส่งออกรายงานได้")
+		return
+	}
+
+	carNames := rentFlowPartnerCarNames(tenant.ID)
+	fileName := "rentflow-report-" + time.Now().Format("20060102-150405") + ".csv"
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.Header("Content-Disposition", "attachment; filename="+fileName)
+	writer := csv.NewWriter(c.Writer)
+	_ = writer.Write([]string{"รหัสการจอง", "รถ", "สถานะ", "ชื่อลูกค้า", "เบอร์โทร", "วันรับรถ", "วันคืนรถ", "ยอดรวม"})
+	for _, booking := range bookings {
+		_ = writer.Write([]string{
+			booking.BookingCode,
+			carNames[booking.CarID],
+			booking.Status,
+			booking.CustomerName,
+			booking.CustomerPhone,
+			booking.PickupDate.Format("02/01/2006 15:04"),
+			booking.ReturnDate.Format("02/01/2006 15:04"),
+			strconv.FormatInt(booking.TotalAmount, 10),
+		})
+	}
+	writer.Flush()
+}
+
 func RentFlowPartnerGetCalendar(c *gin.Context) {
 	tenant, ok := rentFlowRequireOwnerTenant(c)
 	if !ok {
@@ -276,12 +475,14 @@ func RentFlowPartnerCreateAvailabilityBlock(c *gin.Context) {
 		return
 	}
 	var payload struct {
-		CarID     string `json:"carId"`
-		BranchID  string `json:"branchId"`
-		StartDate string `json:"startDate"`
-		EndDate   string `json:"endDate"`
-		Reason    string `json:"reason"`
-		Note      string `json:"note"`
+		CarID       string `json:"carId"`
+		BranchID    string `json:"branchId"`
+		StartDate   string `json:"startDate"`
+		EndDate     string `json:"endDate"`
+		BlockType   string `json:"blockType"`
+		BufferHours int    `json:"bufferHours"`
+		Reason      string `json:"reason"`
+		Note        string `json:"note"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		rentFlowError(c, http.StatusBadRequest, "ข้อมูลวันปิดรับจองไม่ถูกต้อง")
@@ -302,14 +503,16 @@ func RentFlowPartnerCreateAvailabilityBlock(c *gin.Context) {
 		reason = "maintenance"
 	}
 	block := models.RentFlowAvailabilityBlock{
-		ID:        services.NewID("blk"),
-		TenantID:  tenant.ID,
-		CarID:     strings.TrimSpace(payload.CarID),
-		BranchID:  strings.TrimSpace(payload.BranchID),
-		StartDate: startDate,
-		EndDate:   endDate,
-		Reason:    reason,
-		Note:      strings.TrimSpace(payload.Note),
+		ID:          services.NewID("blk"),
+		TenantID:    tenant.ID,
+		CarID:       strings.TrimSpace(payload.CarID),
+		BranchID:    strings.TrimSpace(payload.BranchID),
+		StartDate:   startDate,
+		EndDate:     endDate,
+		BlockType:   rentFlowNormalizeAvailabilityBlockType(payload.BlockType),
+		BufferHours: payload.BufferHours,
+		Reason:      reason,
+		Note:        strings.TrimSpace(payload.Note),
 	}
 	if err := config.DB.Create(&block).Error; err != nil {
 		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถบันทึกวันปิดรับจองได้")
@@ -457,6 +660,8 @@ func RentFlowAdminUpdateTenantStatus(c *gin.Context) {
 	var payload struct {
 		Status      string `json:"status"`
 		BookingMode string `json:"bookingMode"`
+		Plan        string `json:"plan"`
+		Reason      string `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		rentFlowError(c, http.StatusBadRequest, "ข้อมูลร้านไม่ถูกต้อง")
@@ -477,7 +682,7 @@ func RentFlowAdminUpdateTenantStatus(c *gin.Context) {
 	if status == "" {
 		status = tenant.Status
 	}
-	if status != "active" && status != "suspended" && status != "pending" {
+	if status != "active" && status != "suspended" && status != "pending" && status != "rejected" {
 		rentFlowError(c, http.StatusBadRequest, "สถานะร้านไม่ถูกต้อง")
 		return
 	}
@@ -488,10 +693,26 @@ func RentFlowAdminUpdateTenantStatus(c *gin.Context) {
 	}
 
 	now := time.Now()
+	plan := tenant.Plan
+	if strings.TrimSpace(payload.Plan) != "" {
+		plan = rentFlowNormalizePlatformPartnerPlan(payload.Plan)
+	}
 	updates := map[string]interface{}{
-		"status":       status,
-		"booking_mode": bookingMode,
-		"updated_at":   now,
+		"status":           status,
+		"booking_mode":     bookingMode,
+		"plan":             plan,
+		"lifecycle_reason": strings.TrimSpace(payload.Reason),
+		"updated_at":       now,
+	}
+	switch status {
+	case "active":
+		updates["approved_at"] = &now
+		updates["suspended_at"] = nil
+		updates["rejected_at"] = nil
+	case "suspended":
+		updates["suspended_at"] = &now
+	case "rejected":
+		updates["rejected_at"] = &now
 	}
 	if err := config.DB.Model(&models.RentFlowTenant{}).Where("id = ?", tenant.ID).Updates(updates).Error; err != nil {
 		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถอัปเดตร้านได้")
@@ -500,6 +721,8 @@ func RentFlowAdminUpdateTenantStatus(c *gin.Context) {
 
 	tenant.Status = status
 	tenant.BookingMode = bookingMode
+	tenant.Plan = plan
+	tenant.LifecycleReason = strings.TrimSpace(payload.Reason)
 	tenant.UpdatedAt = now
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
 	rentFlowAudit(c, tenant.ID, "platform.tenant_settings", "tenant", tenant.ID, status+"|"+bookingMode)
@@ -516,14 +739,15 @@ func RentFlowAdminUpdateTenantStatus(c *gin.Context) {
 	})
 	rentFlowSuccess(c, http.StatusOK, "อัปเดตร้านสำเร็จ", gin.H{
 		"tenant": gin.H{
-			"id":           tenant.ID,
-			"shopName":     tenant.ShopName,
-			"domainSlug":   tenant.DomainSlug,
-			"publicDomain": tenant.PublicDomain,
-			"status":       tenant.Status,
-			"bookingMode":  rentFlowNormalizeBookingMode(tenant.BookingMode),
-			"plan":         tenant.Plan,
-			"updatedAt":    tenant.UpdatedAt,
+			"id":              tenant.ID,
+			"shopName":        tenant.ShopName,
+			"domainSlug":      tenant.DomainSlug,
+			"publicDomain":    tenant.PublicDomain,
+			"status":          tenant.Status,
+			"bookingMode":     rentFlowNormalizeBookingMode(tenant.BookingMode),
+			"plan":            tenant.Plan,
+			"lifecycleReason": tenant.LifecycleReason,
+			"updatedAt":       tenant.UpdatedAt,
 		},
 	})
 }
@@ -536,10 +760,84 @@ func rentFlowPaymentByID(tenantID, paymentID string) (models.RentFlowPayment, er
 
 func rentFlowNormalizeBookingStatus(status string) string {
 	switch strings.TrimSpace(strings.ToLower(status)) {
-	case "pending", "confirmed", "paid", "completed", "cancelled":
+	case "pending", "confirmed", "paid", "active", "completed", "cancelled", "review":
 		return strings.TrimSpace(strings.ToLower(status))
 	default:
 		return ""
+	}
+}
+
+func rentFlowPartnerLoadBooking(c *gin.Context, tenantID, id string) (models.RentFlowBooking, bool) {
+	var booking models.RentFlowBooking
+	if err := config.DB.Where("tenant_id = ? AND (id = ? OR booking_code = ?)", tenantID, id, id).First(&booking).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			rentFlowError(c, http.StatusNotFound, "ไม่พบรายการจอง")
+			return models.RentFlowBooking{}, false
+		}
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถค้นหาการจองได้")
+		return models.RentFlowBooking{}, false
+	}
+	return booking, true
+}
+
+func rentFlowNormalizeBookingOperationType(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "inspection", "handover", "return", "damage", "fine", "note":
+		return strings.TrimSpace(strings.ToLower(value))
+	default:
+		return ""
+	}
+}
+
+func rentFlowNormalizeAvailabilityBlockType(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "maintenance", "buffer", "manual", "holiday", "inspection":
+		return strings.TrimSpace(strings.ToLower(value))
+	default:
+		return "maintenance"
+	}
+}
+
+func rentFlowBookingStatusForOperation(operationType, currentStatus string) string {
+	switch operationType {
+	case "handover":
+		return "active"
+	case "return":
+		return "completed"
+	case "damage", "fine":
+		return "review"
+	default:
+		return currentStatus
+	}
+}
+
+func rentFlowBookingOperationResponses(items []models.RentFlowBookingOperation) []gin.H {
+	result := make([]gin.H, 0, len(items))
+	for _, item := range items {
+		result = append(result, rentFlowBookingOperationResponse(item))
+	}
+	return result
+}
+
+func rentFlowBookingOperationResponse(item models.RentFlowBookingOperation) gin.H {
+	var checklist []string
+	if strings.TrimSpace(item.ChecklistJSON) != "" {
+		_ = json.Unmarshal([]byte(item.ChecklistJSON), &checklist)
+	}
+	return gin.H{
+		"id":         item.ID,
+		"tenantId":   item.TenantID,
+		"bookingId":  item.BookingID,
+		"type":       item.Type,
+		"checklist":  checklist,
+		"odometer":   item.Odometer,
+		"fuelLevel":  item.FuelLevel,
+		"damageNote": item.DamageNote,
+		"fineAmount": item.FineAmount,
+		"staffNote":  item.StaffNote,
+		"createdBy":  item.CreatedBy,
+		"createdAt":  item.CreatedAt,
+		"updatedAt":  item.UpdatedAt,
 	}
 }
 

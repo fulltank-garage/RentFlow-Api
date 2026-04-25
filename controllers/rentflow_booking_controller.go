@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -20,11 +21,12 @@ func RentFlowPreviewBookingPrice(c *gin.Context) {
 	}
 
 	var payload struct {
-		CarID          string `json:"carId"`
-		PickupDate     string `json:"pickupDate"`
-		ReturnDate     string `json:"returnDate"`
-		PickupLocation string `json:"pickupLocation"`
-		ReturnLocation string `json:"returnLocation"`
+		CarID          string                        `json:"carId"`
+		PickupDate     string                        `json:"pickupDate"`
+		ReturnDate     string                        `json:"returnDate"`
+		PickupLocation string                        `json:"pickupLocation"`
+		ReturnLocation string                        `json:"returnLocation"`
+		Addons         []rentFlowBookingAddonPayload `json:"addons"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		rentFlowError(c, http.StatusBadRequest, "ข้อมูลสำหรับคำนวณราคาไม่ถูกต้อง")
@@ -43,11 +45,16 @@ func RentFlowPreviewBookingPrice(c *gin.Context) {
 		payload.PickupLocation,
 		payload.ReturnLocation,
 	)
+	addons, addonsJSON, addonsTotal := rentFlowBookingAddonsSummary(tenant.ID, payload.Addons, totalDays)
+	totalAmount += addonsTotal
 
 	rentFlowSuccess(c, http.StatusOK, "คำนวณราคาเรียบร้อย", gin.H{
 		"totalDays":   totalDays,
 		"pricePerDay": car.PricePerDay,
 		"subtotal":    subtotal,
+		"addons":      addons,
+		"addonsTotal": addonsTotal,
+		"addonsJson":  addonsJSON,
 		"extraCharge": extraCharge,
 		"discount":    discount,
 		"totalAmount": totalAmount,
@@ -61,17 +68,18 @@ func RentFlowCreateBooking(c *gin.Context) {
 	}
 
 	var payload struct {
-		CarID          string `json:"carId"`
-		PickupDate     string `json:"pickupDate"`
-		ReturnDate     string `json:"returnDate"`
-		PickupLocation string `json:"pickupLocation"`
-		ReturnLocation string `json:"returnLocation"`
-		PickupMethod   string `json:"pickupMethod"`
-		ReturnMethod   string `json:"returnMethod"`
-		CustomerName   string `json:"customerName"`
-		CustomerEmail  string `json:"customerEmail"`
-		CustomerPhone  string `json:"customerPhone"`
-		Note           string `json:"note"`
+		CarID          string                        `json:"carId"`
+		PickupDate     string                        `json:"pickupDate"`
+		ReturnDate     string                        `json:"returnDate"`
+		PickupLocation string                        `json:"pickupLocation"`
+		ReturnLocation string                        `json:"returnLocation"`
+		PickupMethod   string                        `json:"pickupMethod"`
+		ReturnMethod   string                        `json:"returnMethod"`
+		CustomerName   string                        `json:"customerName"`
+		CustomerEmail  string                        `json:"customerEmail"`
+		CustomerPhone  string                        `json:"customerPhone"`
+		Note           string                        `json:"note"`
+		Addons         []rentFlowBookingAddonPayload `json:"addons"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		rentFlowError(c, http.StatusBadRequest, "ข้อมูลการจองไม่ถูกต้อง")
@@ -118,6 +126,8 @@ func RentFlowCreateBooking(c *gin.Context) {
 		payload.PickupLocation,
 		payload.ReturnLocation,
 	)
+	_, addonsJSON, addonsTotal := rentFlowBookingAddonsSummary(tenant.ID, payload.Addons, totalDays)
+	totalAmount += addonsTotal
 
 	booking := models.RentFlowBooking{
 		ID:             services.NewID("bok"),
@@ -133,6 +143,8 @@ func RentFlowCreateBooking(c *gin.Context) {
 		ReturnMethod:   rentFlowNormalizeMethod(payload.ReturnMethod),
 		TotalDays:      totalDays,
 		Subtotal:       subtotal,
+		AddonsJSON:     addonsJSON,
+		AddonsTotal:    addonsTotal,
 		ExtraCharge:    extraCharge,
 		Discount:       discount,
 		TotalAmount:    totalAmount,
@@ -434,6 +446,172 @@ func rentFlowNormalizeMethod(method string) string {
 	return "branch"
 }
 
+type rentFlowBookingAddonPayload struct {
+	ID      string `json:"id"`
+	Key     string `json:"key"`
+	Name    string `json:"name"`
+	Title   string `json:"title"`
+	Price   int64  `json:"price"`
+	Pricing string `json:"pricing"`
+}
+
+type rentFlowBookingAddonItem struct {
+	ID        string `json:"id,omitempty"`
+	Key       string `json:"key,omitempty"`
+	Name      string `json:"name"`
+	Price     int64  `json:"price"`
+	Pricing   string `json:"pricing"`
+	Quantity  int    `json:"quantity"`
+	LineTotal int64  `json:"lineTotal"`
+}
+
+func rentFlowBookingAddonsSummary(tenantID string, payload []rentFlowBookingAddonPayload, totalDays int) ([]rentFlowBookingAddonItem, string, int64) {
+	if len(payload) == 0 {
+		return []rentFlowBookingAddonItem{}, "", 0
+	}
+
+	days := totalDays
+	if days < 1 {
+		days = 1
+	}
+
+	ids := make([]string, 0, len(payload))
+	names := make([]string, 0, len(payload)*3)
+	for _, addon := range payload {
+		if value := strings.TrimSpace(addon.ID); value != "" {
+			ids = append(ids, value)
+		}
+		for _, value := range []string{addon.Name, addon.Title, addon.Key} {
+			value = strings.TrimSpace(value)
+			if value != "" {
+				names = append(names, strings.ToLower(value))
+			}
+		}
+	}
+
+	dbAddonsByID := map[string]models.RentFlowAddon{}
+	dbAddonsByName := map[string]models.RentFlowAddon{}
+	if len(ids) > 0 || len(names) > 0 {
+		var dbAddons []models.RentFlowAddon
+		query := config.DB.Where("tenant_id = ? AND is_active = ?", tenantID, true)
+		if len(ids) > 0 && len(names) > 0 {
+			query = query.Where("id IN ? OR LOWER(name) IN ?", ids, names)
+		} else if len(ids) > 0 {
+			query = query.Where("id IN ?", ids)
+		} else {
+			query = query.Where("LOWER(name) IN ?", names)
+		}
+		_ = query.Find(&dbAddons).Error
+		for _, addon := range dbAddons {
+			dbAddonsByID[addon.ID] = addon
+			dbAddonsByName[strings.ToLower(strings.TrimSpace(addon.Name))] = addon
+		}
+	}
+
+	items := make([]rentFlowBookingAddonItem, 0, len(payload))
+	seen := map[string]struct{}{}
+	var total int64
+
+	for _, input := range payload {
+		dbAddon, hasDBAddon := dbAddonsByID[strings.TrimSpace(input.ID)]
+		if !hasDBAddon {
+			for _, value := range []string{input.Name, input.Title, input.Key} {
+				value = strings.ToLower(strings.TrimSpace(value))
+				if value == "" {
+					continue
+				}
+				if addon, ok := dbAddonsByName[value]; ok {
+					dbAddon = addon
+					hasDBAddon = true
+					break
+				}
+			}
+		}
+
+		id := strings.TrimSpace(input.ID)
+		key := strings.TrimSpace(input.Key)
+		name := strings.TrimSpace(input.Title)
+		if name == "" {
+			name = strings.TrimSpace(input.Name)
+		}
+		price := input.Price
+		pricing := rentFlowNormalizeAddonPricing(input.Pricing)
+
+		if hasDBAddon {
+			id = dbAddon.ID
+			if name == "" {
+				name = dbAddon.Name
+			}
+			price = dbAddon.Price
+			pricing = rentFlowNormalizeAddonPricing(dbAddon.Unit)
+		}
+		if name == "" {
+			name = key
+		}
+		if name == "" || price < 0 {
+			continue
+		}
+
+		identity := strings.ToLower(strings.TrimSpace(id))
+		if identity == "" {
+			identity = strings.ToLower(strings.TrimSpace(key))
+		}
+		if identity == "" {
+			identity = strings.ToLower(name)
+		}
+		if _, ok := seen[identity]; ok {
+			continue
+		}
+		seen[identity] = struct{}{}
+
+		quantity := 1
+		if pricing == "perDay" {
+			quantity = days
+		}
+		lineTotal := price * int64(quantity)
+		total += lineTotal
+		items = append(items, rentFlowBookingAddonItem{
+			ID:        id,
+			Key:       key,
+			Name:      name,
+			Price:     price,
+			Pricing:   pricing,
+			Quantity:  quantity,
+			LineTotal: lineTotal,
+		})
+	}
+
+	if len(items) == 0 {
+		return []rentFlowBookingAddonItem{}, "", 0
+	}
+
+	raw, err := json.Marshal(items)
+	if err != nil {
+		return items, "", total
+	}
+	return items, string(raw), total
+}
+
+func rentFlowNormalizeAddonPricing(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "day", "daily", "per_day", "perday":
+		return "perDay"
+	default:
+		return "perTrip"
+	}
+}
+
+func rentFlowBookingAddonsFromJSON(raw string) []rentFlowBookingAddonItem {
+	if strings.TrimSpace(raw) == "" {
+		return []rentFlowBookingAddonItem{}
+	}
+	var items []rentFlowBookingAddonItem
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+		return []rentFlowBookingAddonItem{}
+	}
+	return items
+}
+
 func rentFlowLoadOwnedBooking(c *gin.Context, bookingID string) (*models.RentFlowBooking, bool) {
 	user, ok := middleware.CurrentRentFlowUser(c)
 	if !ok {
@@ -566,6 +744,8 @@ func rentFlowBookingResponseWithMaps(booking models.RentFlowBooking, carMap map[
 		"returnMethod":        booking.ReturnMethod,
 		"totalDays":           booking.TotalDays,
 		"subtotal":            booking.Subtotal,
+		"addons":              rentFlowBookingAddonsFromJSON(booking.AddonsJSON),
+		"addonsTotal":         booking.AddonsTotal,
 		"extraCharge":         booking.ExtraCharge,
 		"discount":            booking.Discount,
 		"totalAmount":         booking.TotalAmount,

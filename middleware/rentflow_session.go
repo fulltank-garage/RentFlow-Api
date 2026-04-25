@@ -42,6 +42,11 @@ func AttachRentFlowSession() gin.HandlerFunc {
 			c.Next()
 			return
 		}
+		if strings.EqualFold(user.Status, "locked") || strings.EqualFold(user.Status, "disabled") {
+			_ = services.DeleteSession(config.Ctx, token)
+			c.Next()
+			return
+		}
 
 		c.Set(rentFlowSessionKey, *session)
 		c.Set(rentFlowUserKey, user)

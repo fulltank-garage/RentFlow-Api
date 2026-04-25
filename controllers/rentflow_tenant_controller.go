@@ -421,6 +421,59 @@ func rentFlowReplaceTenantPromoImages(tenantID string, images []rentFlowUploaded
 	})
 }
 
+func RentFlowPartnerReorderPromoImages(c *gin.Context) {
+	tenant, ok := rentFlowRequireOwnerTenant(c)
+	if !ok {
+		return
+	}
+	var payload struct {
+		ImageIDs []string `json:"imageIds"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil || len(payload.ImageIDs) == 0 {
+		rentFlowError(c, http.StatusBadRequest, "ข้อมูลลำดับรูปโปรโมชันไม่ถูกต้อง")
+		return
+	}
+	if err := config.DB.Transaction(func(tx *gorm.DB) error {
+		for index, imageID := range payload.ImageIDs {
+			id := strings.TrimSpace(imageID)
+			if id == "" {
+				continue
+			}
+			if err := tx.Model(&models.RentFlowTenantPromoImage{}).
+				Where("tenant_id = ? AND id = ?", tenant.ID, id).
+				Updates(map[string]interface{}{"display_order": index + 1, "updated_at": time.Now()}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถจัดลำดับรูปโปรโมชันได้")
+		return
+	}
+	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
+	rentFlowAudit(c, tenant.ID, "promo_images.reorder", "tenant", tenant.ID, strings.Join(payload.ImageIDs, ","))
+	rentFlowSuccess(c, http.StatusOK, "จัดลำดับรูปโปรโมชันสำเร็จ", rentFlowOwnerTenantResponse(*tenant))
+}
+
+func RentFlowPartnerDeletePromoImage(c *gin.Context) {
+	tenant, ok := rentFlowRequireOwnerTenant(c)
+	if !ok {
+		return
+	}
+	result := config.DB.Where("tenant_id = ? AND id = ?", tenant.ID, c.Param("imageId")).Delete(&models.RentFlowTenantPromoImage{})
+	if result.Error != nil {
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถลบรูปโปรโมชันได้")
+		return
+	}
+	if result.RowsAffected == 0 {
+		rentFlowError(c, http.StatusNotFound, "ไม่พบรูปโปรโมชัน")
+		return
+	}
+	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
+	rentFlowAudit(c, tenant.ID, "promo_images.delete", "tenant_promo_image", c.Param("imageId"), "")
+	rentFlowSuccess(c, http.StatusOK, "ลบรูปโปรโมชันสำเร็จ", rentFlowOwnerTenantResponse(*tenant))
+}
+
 func rentFlowUpdateColumns(updates map[string]interface{}) []string {
 	columns := make([]string, 0, len(updates))
 	for key := range updates {
@@ -514,7 +567,16 @@ func rentFlowCurrentUserTenant(c *gin.Context) (*models.RentFlowTenant, error) {
 	if err := config.DB.
 		Where("owner_user_id = ? OR owner_email = ?", user.ID, user.Email).
 		First(&tenant).Error; err != nil {
-		return nil, err
+		var member models.RentFlowTenantMember
+		memberErr := config.DB.
+			Where("status = ? AND (user_id = ? OR LOWER(email) = ?)", "active", user.ID, strings.ToLower(user.Email)).
+			First(&member).Error
+		if memberErr != nil {
+			return nil, err
+		}
+		if err := config.DB.Where("id = ?", member.TenantID).First(&tenant).Error; err != nil {
+			return nil, err
+		}
 	}
 	return &tenant, nil
 }

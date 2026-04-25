@@ -26,6 +26,7 @@ type rentFlowPlatformTenantItem struct {
 	Status            string    `json:"status"`
 	BookingMode       string    `json:"bookingMode"`
 	Plan              string    `json:"plan"`
+	LifecycleReason   string    `json:"lifecycleReason,omitempty"`
 	Cars              int       `json:"cars"`
 	TotalBookings     int       `json:"totalBookings"`
 	BookingsThisMonth int       `json:"bookingsThisMonth"`
@@ -327,10 +328,16 @@ func RentFlowAdminGetBilling(c *gin.Context) {
 			"revenueThisMonth": revenue,
 		})
 	}
+	invoices, err := rentFlowPlatformEnsureInvoices(items)
+	if err != nil {
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถเตรียมใบแจ้งหนี้ได้")
+		return
+	}
 
 	rentFlowSuccess(c, http.StatusOK, "ดึงข้อมูล billing สำเร็จ", gin.H{
-		"items": items,
-		"plans": planItems,
+		"items":    items,
+		"plans":    planItems,
+		"invoices": invoices,
 		"summary": gin.H{
 			"totalTenants":      len(items),
 			"revenueThisMonth":  totalRevenue,
@@ -354,6 +361,18 @@ func RentFlowAdminGetSecurity(c *gin.Context) {
 	if err := config.DB.Where("status = ?", "active").Find(&members).Error; err != nil {
 		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถดึงข้อมูลสมาชิกได้")
 		return
+	}
+	memberItems := make([]gin.H, 0, len(members))
+	for _, member := range members {
+		memberItems = append(memberItems, gin.H{
+			"id":       member.ID,
+			"tenantId": member.TenantID,
+			"userId":   member.UserID,
+			"email":    member.Email,
+			"name":     member.Name,
+			"role":     member.Role,
+			"status":   member.Status,
+		})
 	}
 
 	var lineChannels []models.RentFlowLineChannel
@@ -396,7 +415,87 @@ func RentFlowAdminGetSecurity(c *gin.Context) {
 			"suspendedTenants":        rentFlowPlatformCountTenantsByStatus(tenantItems, "suspended"),
 		},
 		"policies": policies,
+		"members":  memberItems,
 	})
+}
+
+func RentFlowAdminGetAuditLogs(c *gin.Context) {
+	if !rentFlowRequirePlatformAdmin(c) {
+		return
+	}
+	var logs []models.RentFlowAuditLog
+	query := config.DB.Order("created_at DESC").Limit(200)
+	if tenantID := strings.TrimSpace(c.Query("tenantId")); tenantID != "" {
+		query = query.Where("tenant_id = ?", tenantID)
+	}
+	if action := strings.TrimSpace(c.Query("action")); action != "" {
+		query = query.Where("action = ?", action)
+	}
+	if err := query.Find(&logs).Error; err != nil {
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถดึง audit log ได้")
+		return
+	}
+	rentFlowSuccess(c, http.StatusOK, "ดึง audit log สำเร็จ", gin.H{"items": logs, "total": len(logs)})
+}
+
+func RentFlowAdminUpdateUserSecurity(c *gin.Context) {
+	if !rentFlowRequirePlatformAdmin(c) {
+		return
+	}
+	var payload struct {
+		Status        string `json:"status"`
+		Reason        string `json:"reason"`
+		RevokeSession bool   `json:"revokeSession"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		rentFlowError(c, http.StatusBadRequest, "ข้อมูลความปลอดภัยผู้ใช้ไม่ถูกต้อง")
+		return
+	}
+	status := strings.TrimSpace(strings.ToLower(payload.Status))
+	if status == "" {
+		status = "active"
+	}
+	if status != "active" && status != "locked" && status != "disabled" {
+		rentFlowError(c, http.StatusBadRequest, "สถานะผู้ใช้ไม่ถูกต้อง")
+		return
+	}
+	var user models.RentFlowUser
+	if err := config.DB.Where("id = ? OR username = ? OR email = ?", c.Param("userId"), c.Param("userId"), c.Param("userId")).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			rentFlowError(c, http.StatusNotFound, "ไม่พบผู้ใช้")
+			return
+		}
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถค้นหาผู้ใช้ได้")
+		return
+	}
+	now := time.Now()
+	updates := map[string]interface{}{
+		"status":        status,
+		"locked_reason": strings.TrimSpace(payload.Reason),
+		"updated_at":    now,
+	}
+	if status == "locked" || status == "disabled" {
+		updates["locked_at"] = &now
+	} else {
+		updates["locked_at"] = nil
+		updates["locked_reason"] = ""
+	}
+	if err := config.DB.Model(&models.RentFlowUser{}).Where("id = ?", user.ID).Updates(updates).Error; err != nil {
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถอัปเดตผู้ใช้ได้")
+		return
+	}
+	if payload.RevokeSession || status == "locked" || status == "disabled" {
+		_ = services.DeleteUserSessions(config.Ctx, user.ID)
+	}
+	rentFlowAudit(c, "", "platform.user_security.update", "user", user.ID, status+"|"+strings.TrimSpace(payload.Reason))
+	rentFlowSuccess(c, http.StatusOK, "อัปเดตความปลอดภัยผู้ใช้สำเร็จ", gin.H{"user": gin.H{
+		"id":           user.ID,
+		"username":     user.Username,
+		"email":        user.Email,
+		"name":         user.Name,
+		"status":       status,
+		"lockedReason": strings.TrimSpace(payload.Reason),
+	}})
 }
 
 func rentFlowPlatformSummary(tenantItems []rentFlowPlatformTenantItem, domainItems []rentFlowPlatformDomainItem) (gin.H, error) {
@@ -454,11 +553,56 @@ func rentFlowNormalizePlatformPartnerPlan(plan string) string {
 
 func rentFlowNormalizePlatformTenantStatus(status string) string {
 	switch strings.TrimSpace(strings.ToLower(status)) {
-	case "active", "suspended":
+	case "active", "suspended", "rejected":
 		return strings.TrimSpace(strings.ToLower(status))
 	default:
 		return "pending"
 	}
+}
+
+func rentFlowPlatformEnsureInvoices(tenants []rentFlowPlatformTenantItem) ([]models.RentFlowPlatformInvoice, error) {
+	period := time.Now().Format("2006-01")
+	planPrices := map[string]int64{
+		"starter":    0,
+		"growth":     990,
+		"enterprise": 2990,
+	}
+	for _, tenant := range tenants {
+		amount := planPrices[rentFlowNormalizePlatformPartnerPlan(tenant.Plan)]
+		var existing models.RentFlowPlatformInvoice
+		err := config.DB.Where("tenant_id = ? AND period = ?", tenant.ID, period).First(&existing).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			now := time.Now()
+			status := "draft"
+			if amount == 0 {
+				status = "paid"
+			}
+			invoice := models.RentFlowPlatformInvoice{
+				ID:       services.NewID("inv"),
+				TenantID: tenant.ID,
+				Period:   period,
+				Plan:     rentFlowNormalizePlatformPartnerPlan(tenant.Plan),
+				Amount:   amount,
+				Status:   status,
+				IssuedAt: &now,
+			}
+			if status == "paid" {
+				invoice.PaidAt = &now
+			}
+			if err := config.DB.Create(&invoice).Error; err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var invoices []models.RentFlowPlatformInvoice
+	if err := config.DB.Order("created_at DESC").Limit(200).Find(&invoices).Error; err != nil {
+		return nil, err
+	}
+	return invoices, nil
 }
 
 func rentFlowPlatformHosts() gin.H {
@@ -580,6 +724,7 @@ func rentFlowPlatformTenantItems() ([]rentFlowPlatformTenantItem, error) {
 			Status:            tenant.Status,
 			BookingMode:       rentFlowNormalizeBookingMode(tenant.BookingMode),
 			Plan:              tenant.Plan,
+			LifecycleReason:   tenant.LifecycleReason,
 			Cars:              carCount[tenant.ID],
 			TotalBookings:     totalBookings[tenant.ID],
 			BookingsThisMonth: bookingsThisMonth[tenant.ID],

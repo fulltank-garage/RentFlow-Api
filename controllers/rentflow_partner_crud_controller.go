@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -30,22 +31,25 @@ func RentFlowPartnerCreateMember(c *gin.Context) {
 		return
 	}
 	var payload struct {
-		Email string `json:"email"`
-		Name  string `json:"name"`
-		Role  string `json:"role"`
+		Email       string   `json:"email"`
+		Name        string   `json:"name"`
+		Role        string   `json:"role"`
+		Permissions []string `json:"permissions"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		rentFlowError(c, http.StatusBadRequest, "ข้อมูลทีมไม่ถูกต้อง")
 		return
 	}
 	role := rentFlowNormalizeMemberRole(payload.Role)
+	permissionsJSON := rentFlowPartnerPermissionsJSON(payload.Permissions)
 	item := models.RentFlowTenantMember{
-		ID:       services.NewID("mbr"),
-		TenantID: tenant.ID,
-		Email:    strings.TrimSpace(strings.ToLower(payload.Email)),
-		Name:     strings.TrimSpace(payload.Name),
-		Role:     role,
-		Status:   "active",
+		ID:              services.NewID("mbr"),
+		TenantID:        tenant.ID,
+		Email:           strings.TrimSpace(strings.ToLower(payload.Email)),
+		Name:            strings.TrimSpace(payload.Name),
+		Role:            role,
+		PermissionsJSON: permissionsJSON,
+		Status:          "active",
 	}
 	if item.Email == "" {
 		rentFlowError(c, http.StatusBadRequest, "กรุณากรอกอีเมล")
@@ -65,9 +69,10 @@ func RentFlowPartnerUpdateMember(c *gin.Context) {
 		return
 	}
 	var payload struct {
-		Name   string `json:"name"`
-		Role   string `json:"role"`
-		Status string `json:"status"`
+		Name        string   `json:"name"`
+		Role        string   `json:"role"`
+		Status      string   `json:"status"`
+		Permissions []string `json:"permissions"`
 	}
 	_ = c.ShouldBindJSON(&payload)
 	status := strings.TrimSpace(payload.Status)
@@ -77,7 +82,13 @@ func RentFlowPartnerUpdateMember(c *gin.Context) {
 	role := rentFlowNormalizeMemberRole(payload.Role)
 	result := config.DB.Model(&models.RentFlowTenantMember{}).
 		Where("tenant_id = ? AND id = ?", tenant.ID, c.Param("memberId")).
-		Updates(map[string]interface{}{"name": strings.TrimSpace(payload.Name), "role": role, "status": status, "updated_at": time.Now()})
+		Updates(map[string]interface{}{
+			"name":             strings.TrimSpace(payload.Name),
+			"role":             role,
+			"permissions_json": rentFlowPartnerPermissionsJSON(payload.Permissions),
+			"status":           status,
+			"updated_at":       time.Now(),
+		})
 	if result.Error != nil {
 		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถอัปเดตทีมได้")
 		return
@@ -106,6 +117,30 @@ func RentFlowPartnerDeleteMember(c *gin.Context) {
 	}
 	rentFlowAudit(c, tenant.ID, "member.delete", "member", c.Param("memberId"), "")
 	rentFlowSuccess(c, http.StatusOK, "ลบทีมสำเร็จ", nil)
+}
+
+func rentFlowPartnerPermissionsJSON(items []string) string {
+	if len(items) == 0 {
+		return ""
+	}
+	normalized := make([]string, 0, len(items))
+	seen := map[string]bool{}
+	for _, item := range items {
+		value := strings.TrimSpace(strings.ToLower(item))
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		normalized = append(normalized, value)
+	}
+	if len(normalized) == 0 {
+		return ""
+	}
+	raw, err := json.Marshal(normalized)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
 }
 
 func RentFlowPartnerListPromotions(c *gin.Context) {

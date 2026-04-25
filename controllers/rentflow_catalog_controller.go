@@ -129,7 +129,8 @@ func RentFlowGetCars(c *gin.Context) {
 		)
 	}
 
-	if sortKey := strings.TrimSpace(c.Query("sort")); sortKey == "price_desc" {
+	sortKey := strings.TrimSpace(c.Query("sort"))
+	if sortKey == "price_desc" {
 		query = query.Order("price_per_day DESC")
 	} else {
 		query = query.Order("price_per_day ASC")
@@ -166,6 +167,9 @@ func RentFlowGetCars(c *gin.Context) {
 
 		availabilityByCarID[car.ID] = snapshot
 		visibleCars = append(visibleCars, car)
+	}
+	if marketplace && sortKey == "" {
+		visibleCars = rentFlowFairMarketplaceCars(visibleCars)
 	}
 
 	carImageURLs, err := rentFlowCarImageURLsForTenants(c, tenantMap, visibleCars)
@@ -225,6 +229,45 @@ func RentFlowGetCars(c *gin.Context) {
 	}
 	services.CacheSetJSON(config.Ctx, cacheKey, response, 5*time.Minute)
 	c.JSON(http.StatusOK, response)
+}
+
+func rentFlowFairMarketplaceCars(cars []models.RentFlowCar) []models.RentFlowCar {
+	if len(cars) <= 1 {
+		return cars
+	}
+	tenantOrder := make([]string, 0)
+	grouped := map[string][]models.RentFlowCar{}
+	seen := map[string]bool{}
+	for _, car := range cars {
+		if !seen[car.TenantID] {
+			seen[car.TenantID] = true
+			tenantOrder = append(tenantOrder, car.TenantID)
+		}
+		grouped[car.TenantID] = append(grouped[car.TenantID], car)
+	}
+	if len(tenantOrder) <= 1 {
+		return cars
+	}
+	rotation := time.Now().YearDay() % len(tenantOrder)
+	tenantOrder = append(tenantOrder[rotation:], tenantOrder[:rotation]...)
+
+	result := make([]models.RentFlowCar, 0, len(cars))
+	for len(result) < len(cars) {
+		added := false
+		for _, tenantID := range tenantOrder {
+			items := grouped[tenantID]
+			if len(items) == 0 {
+				continue
+			}
+			result = append(result, items[0])
+			grouped[tenantID] = items[1:]
+			added = true
+		}
+		if !added {
+			break
+		}
+	}
+	return result
 }
 
 func RentFlowGetCarPrimaryImage(c *gin.Context) {
@@ -715,22 +758,35 @@ func rentFlowCarAvailability(tenantID string, car models.RentFlowCar, pickupDate
 	var reservedCount int64
 	err := config.DB.Model(&models.RentFlowBooking{}).
 		Where("tenant_id = ? AND car_id = ?", tenantID, car.ID).
-		Where("status IN ?", []string{"pending", "confirmed", "paid"}).
+		Where("status IN ?", rentFlowReservationBlockingStatuses()).
 		Where("pickup_date < ? AND return_date > ?", returnDate, pickupDate).
 		Count(&reservedCount).Error
 	if err != nil {
 		return base, err
 	}
 
-	var blockCount int64
-	err = config.DB.Model(&models.RentFlowAvailabilityBlock{}).
+	var blocks []models.RentFlowAvailabilityBlock
+	err = config.DB.
 		Where("tenant_id = ? AND (car_id = ? OR car_id = '')", tenantID, car.ID).
-		Where("start_date < ? AND end_date > ?", returnDate, pickupDate).
-		Count(&blockCount).Error
+		Find(&blocks).Error
 	if err != nil {
 		return base, err
 	}
-	if blockCount > 0 {
+	hasBlock := false
+	for _, block := range blocks {
+		start := block.StartDate
+		end := block.EndDate
+		if block.BufferHours > 0 {
+			buffer := time.Duration(block.BufferHours) * time.Hour
+			start = start.Add(-buffer)
+			end = end.Add(buffer)
+		}
+		if start.Before(returnDate) && end.After(pickupDate) {
+			hasBlock = true
+			break
+		}
+	}
+	if hasBlock {
 		return rentFlowCarAvailabilitySnapshot{
 			UnitCount:      base.UnitCount,
 			ReservedUnits:  int(reservedCount),
@@ -764,7 +820,7 @@ func rentFlowUnavailableDates(tenantID, carID string) ([]string, error) {
 	var bookings []models.RentFlowBooking
 	if err := config.DB.
 		Where("tenant_id = ? AND car_id = ?", tenantID, carID).
-		Where("status IN ?", []string{"pending", "confirmed", "paid"}).
+		Where("status IN ?", rentFlowReservationBlockingStatuses()).
 		Find(&bookings).Error; err != nil {
 		return nil, err
 	}
@@ -784,6 +840,10 @@ func rentFlowUnavailableDates(tenantID, carID string) ([]string, error) {
 		days = append(days, services.ExpandDateRange(block.StartDate, block.EndDate)...)
 	}
 	return services.UniqueSortedStrings(days), nil
+}
+
+func rentFlowReservationBlockingStatuses() []string {
+	return []string{"pending", "confirmed", "paid", "active", "review"}
 }
 
 func rentFlowCarGrade(carID string) int {
