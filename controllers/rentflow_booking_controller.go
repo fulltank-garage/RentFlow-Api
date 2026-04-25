@@ -236,9 +236,12 @@ func RentFlowCreatePayment(c *gin.Context) {
 	}
 
 	var payload struct {
-		BookingID string  `json:"bookingId"`
-		Method    string  `json:"method"`
-		SlipImage *string `json:"slipImage"`
+		BookingID  string  `json:"bookingId"`
+		Method     string  `json:"method"`
+		SlipImage  *string `json:"slipImage"`
+		CardHolder string  `json:"cardHolder"`
+		CardNumber string  `json:"cardNumber"`
+		CardExpiry string  `json:"cardExpiry"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		rentFlowError(c, http.StatusBadRequest, "ข้อมูลการชำระเงินไม่ถูกต้อง")
@@ -255,12 +258,15 @@ func RentFlowCreatePayment(c *gin.Context) {
 		return
 	}
 
-	method := strings.TrimSpace(payload.Method)
-	if method == "bank_transfer" {
-		method = "bank_transfer"
-	}
+	method := rentFlowNormalizePaymentMethod(payload.Method)
 	if method == "" {
 		method = "promptpay"
+	}
+	if method == "card" {
+		if !rentFlowValidateInternalCard(payload.CardNumber, payload.CardExpiry) {
+			rentFlowError(c, http.StatusBadRequest, "ข้อมูลบัตรไม่ถูกต้อง")
+			return
+		}
 	}
 
 	slipBlob, slipMimeType, err := rentFlowImageBlobFromSource(payload.SlipImage)
@@ -273,22 +279,27 @@ func RentFlowCreatePayment(c *gin.Context) {
 		return
 	}
 
+	now := time.Now()
 	payment := models.RentFlowPayment{
-		ID:            services.NewID("pay"),
-		TenantID:      tenant.ID,
-		BookingID:     booking.ID,
-		Method:        method,
-		Status:        "paid",
-		Amount:        booking.TotalAmount,
-		TransactionID: services.NewID("txn"),
-		SlipMimeType:  slipMimeType,
-		SlipBlob:      slipBlob,
+		ID:               services.NewID("pay"),
+		TenantID:         tenant.ID,
+		BookingID:        booking.ID,
+		Method:           method,
+		Status:           "paid",
+		Amount:           booking.TotalAmount,
+		TransactionID:    services.NewID("txn_int"),
+		Processor:        "internal",
+		ProcessedAt:      &now,
+		SlipMimeType:     slipMimeType,
+		SlipBlob:         slipBlob,
+		SettlementPeriod: time.Now().Format("2006-01"),
 	}
 	if method == "promptpay" {
 		payment.QRCodeURL = "/QR-CODE.jpg"
 	}
 	if method == "card" {
-		payment.PaymentURL = "https://payments.example.com/checkout/" + payment.TransactionID
+		payment.CardHolder = strings.TrimSpace(payload.CardHolder)
+		payment.CardLast4 = rentFlowCardLast4(payload.CardNumber)
 	}
 
 	if err := config.DB.Create(&payment).Error; err != nil {
@@ -775,25 +786,67 @@ func rentFlowDisplayBranchName(tenantID, value string, branchNameMap map[string]
 
 func rentFlowPaymentResponse(payment models.RentFlowPayment) gin.H {
 	return gin.H{
-		"id":            payment.ID,
-		"tenantId":      payment.TenantID,
-		"bookingId":     payment.BookingID,
-		"method":        payment.Method,
-		"status":        payment.Status,
-		"amount":        payment.Amount,
-		"transactionId": payment.TransactionID,
-		"paymentUrl":    payment.PaymentURL,
-		"qrCodeUrl":     payment.QRCodeURL,
-		"slipUrl":       rentFlowPaymentSlipURL(payment),
-		"verifiedBy":    payment.VerifiedBy,
-		"verifiedAt":    payment.VerifiedAt,
-		"refundStatus":  payment.RefundStatus,
-		"refundAmount":  payment.RefundAmount,
-		"payoutStatus":  payment.PayoutStatus,
-		"settledAt":     payment.SettledAt,
-		"createdAt":     payment.CreatedAt,
-		"updatedAt":     payment.UpdatedAt,
+		"id":               payment.ID,
+		"tenantId":         payment.TenantID,
+		"bookingId":        payment.BookingID,
+		"method":           payment.Method,
+		"status":           payment.Status,
+		"amount":           payment.Amount,
+		"transactionId":    payment.TransactionID,
+		"paymentUrl":       payment.PaymentURL,
+		"qrCodeUrl":        payment.QRCodeURL,
+		"processor":        payment.Processor,
+		"cardLast4":        payment.CardLast4,
+		"cardHolder":       payment.CardHolder,
+		"processedAt":      payment.ProcessedAt,
+		"failureReason":    payment.FailureReason,
+		"slipUrl":          rentFlowPaymentSlipURL(payment),
+		"verifiedBy":       payment.VerifiedBy,
+		"verifiedAt":       payment.VerifiedAt,
+		"refundStatus":     payment.RefundStatus,
+		"refundAmount":     payment.RefundAmount,
+		"payoutStatus":     payment.PayoutStatus,
+		"settledAt":        payment.SettledAt,
+		"settlementPeriod": payment.SettlementPeriod,
+		"settlementNote":   payment.SettlementNote,
+		"createdAt":        payment.CreatedAt,
+		"updatedAt":        payment.UpdatedAt,
 	}
+}
+
+func rentFlowNormalizePaymentMethod(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case "card", "promptpay", "cash":
+		return strings.TrimSpace(strings.ToLower(value))
+	case "transfer", "bank-transfer", "bank_transfer":
+		return "bank_transfer"
+	default:
+		return ""
+	}
+}
+
+func rentFlowValidateInternalCard(number, expiry string) bool {
+	digits := rentFlowDigitsOnly(number)
+	expiry = strings.TrimSpace(expiry)
+	return len(digits) >= 12 && len(digits) <= 19 && len(expiry) >= 4
+}
+
+func rentFlowCardLast4(number string) string {
+	digits := rentFlowDigitsOnly(number)
+	if len(digits) <= 4 {
+		return digits
+	}
+	return digits[len(digits)-4:]
+}
+
+func rentFlowDigitsOnly(value string) string {
+	var builder strings.Builder
+	for _, char := range value {
+		if char >= '0' && char <= '9' {
+			builder.WriteRune(char)
+		}
+	}
+	return builder.String()
 }
 
 func rentFlowCreateNotification(tenantID string, userID *string, userEmail, title, message string) {

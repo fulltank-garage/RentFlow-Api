@@ -61,5 +61,7 @@ func ConnectDatabase() {
 		&models.RentFlowBookingOperation{},
 		&models.RentFlowStorefrontPage{},
 		&models.RentFlowPlatformInvoice{},
+		&models.RentFlowPlatformMember{},
+		&models.RentFlowSessionAudit{},
 	)
 }

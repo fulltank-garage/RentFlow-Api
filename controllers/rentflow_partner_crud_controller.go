@@ -22,7 +22,7 @@ func RentFlowPartnerListMembers(c *gin.Context) {
 		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถดึงข้อมูลทีมได้")
 		return
 	}
-	rentFlowSuccess(c, http.StatusOK, "ดึงข้อมูลทีมสำเร็จ", gin.H{"items": items, "total": len(items)})
+	rentFlowSuccess(c, http.StatusOK, "ดึงข้อมูลทีมสำเร็จ", gin.H{"items": rentFlowPartnerMemberResponses(items), "total": len(items)})
 }
 
 func RentFlowPartnerCreateMember(c *gin.Context) {
@@ -60,7 +60,30 @@ func RentFlowPartnerCreateMember(c *gin.Context) {
 		return
 	}
 	rentFlowAudit(c, tenant.ID, "member.create", "member", item.ID, item.Email)
-	rentFlowSuccess(c, http.StatusCreated, "เพิ่มทีมสำเร็จ", item)
+	rentFlowSuccess(c, http.StatusCreated, "เพิ่มทีมสำเร็จ", rentFlowPartnerMemberResponse(item))
+}
+
+func rentFlowPartnerMemberResponses(items []models.RentFlowTenantMember) []gin.H {
+	result := make([]gin.H, 0, len(items))
+	for _, item := range items {
+		result = append(result, rentFlowPartnerMemberResponse(item))
+	}
+	return result
+}
+
+func rentFlowPartnerMemberResponse(item models.RentFlowTenantMember) gin.H {
+	return gin.H{
+		"id":          item.ID,
+		"tenantId":    item.TenantID,
+		"userId":      item.UserID,
+		"email":       item.Email,
+		"name":        item.Name,
+		"role":        item.Role,
+		"permissions": rentFlowJSONList(item.PermissionsJSON),
+		"status":      item.Status,
+		"createdAt":   item.CreatedAt,
+		"updatedAt":   item.UpdatedAt,
+	}
 }
 
 func RentFlowPartnerUpdateMember(c *gin.Context) {

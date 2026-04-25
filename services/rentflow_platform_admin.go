@@ -29,12 +29,37 @@ func IsRentFlowPlatformAdmin(user *models.RentFlowUser) bool {
 	userEmail := strings.TrimSpace(strings.ToLower(user.Email))
 	userUsername := strings.TrimSpace(strings.ToLower(user.Username))
 
-	return (adminEmail != "" && userEmail == adminEmail) ||
-		(adminUsername != "" && userUsername == adminUsername)
+	if (adminEmail != "" && userEmail == adminEmail) ||
+		(adminUsername != "" && userUsername == adminUsername) {
+		return true
+	}
+
+	if config.DB == nil {
+		return false
+	}
+
+	var member models.RentFlowPlatformMember
+	err := config.DB.
+		Where("status = ?", "active").
+		Where("user_id = ? OR LOWER(email) = ?", user.ID, userEmail).
+		First(&member).Error
+	return err == nil
 }
 
 func RentFlowPlatformAdminConfigured() bool {
-	return RentFlowPlatformAdminEmail() != "" || RentFlowPlatformAdminUsername() != ""
+	if RentFlowPlatformAdminEmail() != "" || RentFlowPlatformAdminUsername() != "" {
+		return true
+	}
+	if config.DB == nil {
+		return false
+	}
+	var count int64
+	if err := config.DB.Model(&models.RentFlowPlatformMember{}).
+		Where("status = ?", "active").
+		Count(&count).Error; err != nil {
+		return false
+	}
+	return count > 0
 }
 
 func EnsureRentFlowPlatformAdmin() {

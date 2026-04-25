@@ -69,6 +69,9 @@ func RentFlowSessionCookieNames() []string {
 type RentFlowSession struct {
 	UserID    string    `json:"userId"`
 	UserEmail string    `json:"userEmail"`
+	App       string    `json:"app,omitempty"`
+	IP        string    `json:"ip,omitempty"`
+	UserAgent string    `json:"userAgent,omitempty"`
 	ExpiresAt time.Time `json:"expiresAt"`
 }
 

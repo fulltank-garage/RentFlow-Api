@@ -47,6 +47,10 @@ func clearRentFlowSessionCookie(c *gin.Context) {
 }
 
 func rentFlowSessionCookieNameFromRequest(c *gin.Context) string {
+	return services.RentFlowSessionCookieNameForApp(rentFlowAppFromRequest(c))
+}
+
+func rentFlowAppFromRequest(c *gin.Context) string {
 	app := strings.TrimSpace(c.Query("app"))
 	if app == "" {
 		app = strings.TrimSpace(c.GetHeader(services.RentFlowAppHeaderName))
@@ -62,7 +66,7 @@ func rentFlowSessionCookieNameFromRequest(c *gin.Context) string {
 			app = services.RentFlowAppStorefront
 		}
 	}
-	return services.RentFlowSessionCookieNameForApp(app)
+	return services.RentFlowNormalizeAppName(app)
 }
 
 func rentFlowSessionTokenFromRequest(c *gin.Context) string {

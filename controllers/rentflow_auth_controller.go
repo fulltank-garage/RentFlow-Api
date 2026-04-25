@@ -113,6 +113,9 @@ func RentFlowAuthWithGoogle(c *gin.Context) {
 	sessionToken, err := services.CreateSession(config.Ctx, services.RentFlowSession{
 		UserID:    user.ID,
 		UserEmail: user.Email,
+		App:       rentFlowAppFromRequest(c),
+		IP:        c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
 	}, 7*24*time.Hour)
 	if err != nil {
 		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถสร้างเซสชันได้")
@@ -120,6 +123,7 @@ func RentFlowAuthWithGoogle(c *gin.Context) {
 	}
 
 	setRentFlowSessionCookie(c, sessionToken)
+	rentFlowRecordSessionAudit(c, user, "login")
 
 	if isNewUser {
 		notification := models.RentFlowNotification{
@@ -199,6 +203,9 @@ func RentFlowRegister(c *gin.Context) {
 	sessionToken, err := services.CreateSession(config.Ctx, services.RentFlowSession{
 		UserID:    user.ID,
 		UserEmail: user.Email,
+		App:       rentFlowAppFromRequest(c),
+		IP:        c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
 	}, 7*24*time.Hour)
 	if err != nil {
 		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถสร้างเซสชันได้")
@@ -206,6 +213,7 @@ func RentFlowRegister(c *gin.Context) {
 	}
 
 	setRentFlowSessionCookie(c, sessionToken)
+	rentFlowRecordSessionAudit(c, user, "register")
 	rentFlowCreateNotification("", &user.ID, user.Email, "ยินดีต้อนรับสู่ RentFlow", "บัญชีของคุณพร้อมใช้งานแล้ว")
 
 	rentFlowSuccess(c, http.StatusCreated, "สมัครสมาชิกสำเร็จ", gin.H{
@@ -240,6 +248,19 @@ func RentFlowLogin(c *gin.Context) {
 	}
 
 	if !services.CheckPassword(payload.Password, user.PasswordHash) {
+		now := time.Now()
+		failedCount := user.FailedLoginCount + 1
+		updates := map[string]interface{}{
+			"failed_login_count":   failedCount,
+			"last_failed_login_at": &now,
+			"updated_at":           now,
+		}
+		if failedCount >= 5 {
+			updates["status"] = "locked"
+			updates["locked_reason"] = "กรอกรหัสผ่านผิดเกินจำนวนครั้งที่กำหนด"
+			updates["locked_at"] = &now
+		}
+		_ = config.DB.Model(&models.RentFlowUser{}).Where("id = ?", user.ID).Updates(updates).Error
 		rentFlowError(c, http.StatusUnauthorized, "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")
 		return
 	}
@@ -247,6 +268,9 @@ func RentFlowLogin(c *gin.Context) {
 	sessionToken, err := services.CreateSession(config.Ctx, services.RentFlowSession{
 		UserID:    user.ID,
 		UserEmail: user.Email,
+		App:       rentFlowAppFromRequest(c),
+		IP:        c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
 	}, 7*24*time.Hour)
 	if err != nil {
 		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถสร้างเซสชันได้")
@@ -254,8 +278,15 @@ func RentFlowLogin(c *gin.Context) {
 	}
 
 	setRentFlowSessionCookie(c, sessionToken)
+	_ = config.DB.Model(&models.RentFlowUser{}).Where("id = ?", user.ID).Updates(map[string]interface{}{
+		"failed_login_count":   0,
+		"last_failed_login_at": nil,
+		"updated_at":           time.Now(),
+	}).Error
+	rentFlowRecordSessionAudit(c, user, "login")
 	rentFlowSuccess(c, http.StatusOK, "เข้าสู่ระบบสำเร็จ", gin.H{
-		"user": rentFlowUserResponse(user),
+		"user":               rentFlowUserResponse(user),
+		"mustChangePassword": user.MustChangePassword,
 	})
 }
 
@@ -292,8 +323,13 @@ func RentFlowForgotPassword(c *gin.Context) {
 	}
 
 	if err := config.DB.Model(&models.RentFlowUser{}).Where("id = ?", user.ID).Updates(map[string]interface{}{
-		"password_hash": hash,
-		"updated_at":    time.Now(),
+		"password_hash":        hash,
+		"password_changed_at":  time.Now(),
+		"must_change_password": false,
+		"failed_login_count":   0,
+		"last_failed_login_at": nil,
+		"locked_reason":        "",
+		"updated_at":           time.Now(),
 	}).Error; err != nil {
 		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถเปลี่ยนรหัสผ่านได้")
 		return
@@ -314,6 +350,9 @@ func RentFlowGetMe(c *gin.Context) {
 }
 
 func RentFlowLogout(c *gin.Context) {
+	if user, ok := middleware.CurrentRentFlowUser(c); ok {
+		rentFlowRecordSessionAudit(c, *user, "logout")
+	}
 	token := rentFlowSessionTokenFromRequest(c)
 	if token != "" {
 		_ = services.DeleteSession(config.Ctx, token)
@@ -479,12 +518,30 @@ func RentFlowChangePassword(c *gin.Context) {
 	}
 
 	if err := config.DB.Model(&models.RentFlowUser{}).Where("id = ?", user.ID).Updates(map[string]interface{}{
-		"password_hash": hash,
-		"updated_at":    time.Now(),
+		"password_hash":        hash,
+		"password_changed_at":  time.Now(),
+		"must_change_password": false,
+		"updated_at":           time.Now(),
 	}).Error; err != nil {
 		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถอัปเดตรหัสผ่านได้")
 		return
 	}
 
 	rentFlowSuccess(c, http.StatusOK, "อัปเดตรหัสผ่านสำเร็จ", nil)
+}
+
+func rentFlowRecordSessionAudit(c *gin.Context, user models.RentFlowUser, action string) {
+	if strings.TrimSpace(user.ID) == "" || config.DB == nil {
+		return
+	}
+	audit := models.RentFlowSessionAudit{
+		ID:        services.NewID("ses"),
+		UserID:    user.ID,
+		UserEmail: user.Email,
+		App:       rentFlowAppFromRequest(c),
+		Action:    strings.TrimSpace(strings.ToLower(action)),
+		IP:        c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
+	}
+	_ = config.DB.Create(&audit).Error
 }
