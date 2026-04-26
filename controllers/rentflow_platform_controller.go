@@ -26,6 +26,7 @@ type rentFlowPlatformTenantItem struct {
 	PublicDomain      string    `json:"publicDomain"`
 	Status            string    `json:"status"`
 	BookingMode       string    `json:"bookingMode"`
+	ChatThresholdTHB  int64     `json:"chatThresholdTHB"`
 	Plan              string    `json:"plan"`
 	LifecycleReason   string    `json:"lifecycleReason,omitempty"`
 	Cars              int       `json:"cars"`
@@ -149,7 +150,7 @@ func RentFlowAdminCreatePartner(c *gin.Context) {
 	username := strings.TrimSpace(strings.ToLower(payload.Username))
 	firstName := strings.TrimSpace(payload.FirstName)
 	lastName := strings.TrimSpace(payload.LastName)
-	phone := strings.TrimSpace(payload.Phone)
+	phone := rentFlowNormalizePhone(payload.Phone)
 	shopName := strings.TrimSpace(payload.ShopName)
 	domainSlug := rentFlowNormalizeDomainSlug(payload.DomainSlug)
 	plan := rentFlowNormalizePlatformPartnerPlan(payload.Plan)
@@ -1017,6 +1018,7 @@ func rentFlowPlatformTenantItems() ([]rentFlowPlatformTenantItem, error) {
 			PublicDomain:      tenant.PublicDomain,
 			Status:            tenant.Status,
 			BookingMode:       rentFlowNormalizeBookingMode(tenant.BookingMode),
+			ChatThresholdTHB:  tenant.ChatThresholdTHB,
 			Plan:              tenant.Plan,
 			LifecycleReason:   tenant.LifecycleReason,
 			Cars:              carCount[tenant.ID],

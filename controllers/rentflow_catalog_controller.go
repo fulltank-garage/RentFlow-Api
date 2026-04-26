@@ -219,6 +219,7 @@ func RentFlowGetCars(c *gin.Context) {
 			"logoUrl":             rentFlowTenantLogoURL(tenant),
 			"promoImageUrl":       rentFlowTenantPromoImageURL(tenant),
 			"bookingMode":         rentFlowNormalizeBookingMode(tenant.BookingMode),
+			"chatThresholdTHB":    tenant.ChatThresholdTHB,
 			"lineOfficialAccount": rentFlowPublicLineSummary(car.TenantID),
 		})
 	}

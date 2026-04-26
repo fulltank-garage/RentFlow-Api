@@ -50,6 +50,7 @@ type RentFlowTenant struct {
 	PromoImageBlob     []byte         `gorm:"type:bytea" json:"-"`
 	Status             string         `gorm:"size:30;index;not null;default:active" json:"status"`
 	BookingMode        string         `gorm:"size:30;not null;default:payment" json:"bookingMode"`
+	ChatThresholdTHB   int64          `gorm:"not null;default:0" json:"chatThresholdTHB"`
 	Plan               string         `gorm:"size:40;not null;default:starter" json:"plan"`
 	LifecycleReason    string         `gorm:"type:text" json:"lifecycleReason,omitempty"`
 	ApprovedAt         *time.Time     `json:"approvedAt,omitempty"`

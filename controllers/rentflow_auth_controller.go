@@ -293,6 +293,7 @@ func RentFlowLogin(c *gin.Context) {
 func RentFlowForgotPassword(c *gin.Context) {
 	var payload struct {
 		Username    string `json:"username"`
+		Phone       string `json:"phone"`
 		NewPassword string `json:"newPassword"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
@@ -301,8 +302,9 @@ func RentFlowForgotPassword(c *gin.Context) {
 	}
 
 	username := strings.TrimSpace(strings.ToLower(payload.Username))
-	if len(username) < 3 || len(strings.TrimSpace(payload.NewPassword)) < 8 {
-		rentFlowError(c, http.StatusBadRequest, "กรุณากรอกชื่อผู้ใช้และรหัสผ่านใหม่ให้ถูกต้อง")
+	phone := rentFlowNormalizePhone(payload.Phone)
+	if len(username) < 3 || len(phone) < 9 || len(strings.TrimSpace(payload.NewPassword)) < 8 {
+		rentFlowError(c, http.StatusBadRequest, "กรุณากรอกชื่อผู้ใช้ เบอร์โทรศัพท์ และรหัสผ่านใหม่ให้ถูกต้อง")
 		return
 	}
 
@@ -319,6 +321,10 @@ func RentFlowForgotPassword(c *gin.Context) {
 			return
 		}
 		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถตรวจสอบบัญชีผู้ใช้ได้")
+		return
+	}
+	if rentFlowNormalizePhone(user.Phone) == "" || rentFlowNormalizePhone(user.Phone) != phone {
+		rentFlowError(c, http.StatusUnauthorized, "เบอร์โทรศัพท์ไม่ตรงกับข้อมูลในระบบ")
 		return
 	}
 
@@ -392,8 +398,9 @@ func RentFlowUpdateMe(c *gin.Context) {
 			user.Name = strings.TrimSpace(value)
 		}
 		if value, exists := c.GetPostForm("phone"); exists {
-			updates["phone"] = strings.TrimSpace(value)
-			user.Phone = strings.TrimSpace(value)
+			normalizedPhone := rentFlowNormalizePhone(value)
+			updates["phone"] = normalizedPhone
+			user.Phone = normalizedPhone
 		}
 		if strings.EqualFold(strings.TrimSpace(c.PostForm("clearAvatar")), "true") {
 			updates["avatar_mime_type"] = ""
@@ -442,8 +449,9 @@ func RentFlowUpdateMe(c *gin.Context) {
 			user.Name = strings.TrimSpace(*payload.Name)
 		}
 		if payload.Phone != nil {
-			updates["phone"] = strings.TrimSpace(*payload.Phone)
-			user.Phone = strings.TrimSpace(*payload.Phone)
+			normalizedPhone := rentFlowNormalizePhone(*payload.Phone)
+			updates["phone"] = normalizedPhone
+			user.Phone = normalizedPhone
 		}
 		if payload.AvatarURL != nil {
 			avatarBlob, avatarMimeType, err := rentFlowImageBlobFromSource(payload.AvatarURL)

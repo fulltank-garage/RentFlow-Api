@@ -658,10 +658,11 @@ func RentFlowAdminUpdateTenantStatus(c *gin.Context) {
 		return
 	}
 	var payload struct {
-		Status      string `json:"status"`
-		BookingMode string `json:"bookingMode"`
-		Plan        string `json:"plan"`
-		Reason      string `json:"reason"`
+		Status           string `json:"status"`
+		BookingMode      string `json:"bookingMode"`
+		ChatThresholdTHB *int64 `json:"chatThresholdTHB"`
+		Plan             string `json:"plan"`
+		Reason           string `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		rentFlowError(c, http.StatusBadRequest, "ข้อมูลร้านไม่ถูกต้อง")
@@ -697,12 +698,17 @@ func RentFlowAdminUpdateTenantStatus(c *gin.Context) {
 	if strings.TrimSpace(payload.Plan) != "" {
 		plan = rentFlowNormalizePlatformPartnerPlan(payload.Plan)
 	}
+	chatThresholdTHB := tenant.ChatThresholdTHB
+	if payload.ChatThresholdTHB != nil {
+		chatThresholdTHB = max(*payload.ChatThresholdTHB, int64(0))
+	}
 	updates := map[string]interface{}{
-		"status":           status,
-		"booking_mode":     bookingMode,
-		"plan":             plan,
-		"lifecycle_reason": strings.TrimSpace(payload.Reason),
-		"updated_at":       now,
+		"status":             status,
+		"booking_mode":       bookingMode,
+		"chat_threshold_thb": chatThresholdTHB,
+		"plan":               plan,
+		"lifecycle_reason":   strings.TrimSpace(payload.Reason),
+		"updated_at":         now,
 	}
 	switch status {
 	case "active":
@@ -721,6 +727,7 @@ func RentFlowAdminUpdateTenantStatus(c *gin.Context) {
 
 	tenant.Status = status
 	tenant.BookingMode = bookingMode
+	tenant.ChatThresholdTHB = chatThresholdTHB
 	tenant.Plan = plan
 	tenant.LifecycleReason = strings.TrimSpace(payload.Reason)
 	tenant.UpdatedAt = now
@@ -731,23 +738,25 @@ func RentFlowAdminUpdateTenantStatus(c *gin.Context) {
 		TenantID: tenant.ID,
 		EntityID: tenant.ID,
 		Data: gin.H{
-			"id":          tenant.ID,
-			"status":      tenant.Status,
-			"bookingMode": tenant.BookingMode,
-			"domainSlug":  tenant.DomainSlug,
+			"id":               tenant.ID,
+			"status":           tenant.Status,
+			"bookingMode":      tenant.BookingMode,
+			"chatThresholdTHB": tenant.ChatThresholdTHB,
+			"domainSlug":       tenant.DomainSlug,
 		},
 	})
 	rentFlowSuccess(c, http.StatusOK, "อัปเดตร้านสำเร็จ", gin.H{
 		"tenant": gin.H{
-			"id":              tenant.ID,
-			"shopName":        tenant.ShopName,
-			"domainSlug":      tenant.DomainSlug,
-			"publicDomain":    tenant.PublicDomain,
-			"status":          tenant.Status,
-			"bookingMode":     rentFlowNormalizeBookingMode(tenant.BookingMode),
-			"plan":            tenant.Plan,
-			"lifecycleReason": tenant.LifecycleReason,
-			"updatedAt":       tenant.UpdatedAt,
+			"id":               tenant.ID,
+			"shopName":         tenant.ShopName,
+			"domainSlug":       tenant.DomainSlug,
+			"publicDomain":     tenant.PublicDomain,
+			"status":           tenant.Status,
+			"bookingMode":      rentFlowNormalizeBookingMode(tenant.BookingMode),
+			"chatThresholdTHB": tenant.ChatThresholdTHB,
+			"plan":             tenant.Plan,
+			"lifecycleReason":  tenant.LifecycleReason,
+			"updatedAt":        tenant.UpdatedAt,
 		},
 	})
 }

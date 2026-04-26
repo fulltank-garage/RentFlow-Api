@@ -73,6 +73,7 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 	var payload struct {
 		ShopName         string    `json:"shopName"`
 		DomainSlug       string    `json:"domainSlug"`
+		ChatThresholdTHB int64     `json:"chatThresholdTHB"`
 		LogoURL          *string   `json:"logoUrl"`
 		PromoImageURL    *string   `json:"promoImageUrl"`
 		PromoImageURLs   *[]string `json:"promoImageUrls"`
@@ -96,6 +97,7 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 	if isMultipart {
 		payload.ShopName = c.PostForm("shopName")
 		payload.DomainSlug = c.PostForm("domainSlug")
+		payload.ChatThresholdTHB = rentFlowParseThreshold(c.PostForm("chatThresholdTHB"))
 		clearPromoImages = strings.EqualFold(strings.TrimSpace(c.PostForm("clearPromoImages")), "true")
 
 		if value, exists := c.GetPostForm("logoUrl"); exists {
@@ -180,6 +182,10 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 
 	shopName := strings.TrimSpace(payload.ShopName)
 	domainSlug := rentFlowNormalizeDomainSlug(payload.DomainSlug)
+	chatThresholdTHB := payload.ChatThresholdTHB
+	if chatThresholdTHB < 0 {
+		chatThresholdTHB = 0
+	}
 	if len([]rune(shopName)) < 2 {
 		rentFlowError(c, http.StatusBadRequest, "กรุณากรอกชื่อร้านให้ถูกต้อง")
 		return
@@ -272,6 +278,7 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 			PromoImageBlob:     promoImageBlob,
 			Status:             "active",
 			BookingMode:        "payment",
+			ChatThresholdTHB:   chatThresholdTHB,
 			Plan:               "starter",
 		}
 		if err := config.DB.Create(&tenant).Error; err != nil {
@@ -300,13 +307,14 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 
 	now := time.Now()
 	updates := map[string]interface{}{
-		"owner_user_id": ownerUserID,
-		"owner_email":   user.Email,
-		"shop_name":     shopName,
-		"domain_slug":   domainSlug,
-		"public_domain": publicDomain,
-		"status":        "active",
-		"updated_at":    now,
+		"owner_user_id":      ownerUserID,
+		"owner_email":        user.Email,
+		"shop_name":          shopName,
+		"domain_slug":        domainSlug,
+		"public_domain":      publicDomain,
+		"status":             "active",
+		"chat_threshold_thb": chatThresholdTHB,
+		"updated_at":         now,
 	}
 	if existing.Plan == "" {
 		updates["plan"] = "starter"
@@ -340,6 +348,7 @@ func RentFlowUpsertMyTenant(c *gin.Context) {
 	existing.DomainSlug = domainSlug
 	existing.PublicDomain = publicDomain
 	existing.Status = "active"
+	existing.ChatThresholdTHB = chatThresholdTHB
 	existing.UpdatedAt = now
 	if existing.Plan == "" {
 		existing.Plan = "starter"
@@ -712,18 +721,19 @@ func rentFlowPublicTenantResponse(tenant models.RentFlowTenant) gin.H {
 	}
 
 	response := gin.H{
-		"id":             tenant.ID,
-		"shopName":       tenant.ShopName,
-		"domainSlug":     tenant.DomainSlug,
-		"publicDomain":   tenant.PublicDomain,
-		"logoUrl":        rentFlowTenantLogoURL(tenant),
-		"promoImageUrl":  promoImageUrl,
-		"promoImageUrls": promoImageUrls,
-		"status":         tenant.Status,
-		"bookingMode":    rentFlowNormalizeBookingMode(tenant.BookingMode),
-		"plan":           tenant.Plan,
-		"createdAt":      tenant.CreatedAt,
-		"updatedAt":      tenant.UpdatedAt,
+		"id":               tenant.ID,
+		"shopName":         tenant.ShopName,
+		"domainSlug":       tenant.DomainSlug,
+		"publicDomain":     tenant.PublicDomain,
+		"logoUrl":          rentFlowTenantLogoURL(tenant),
+		"promoImageUrl":    promoImageUrl,
+		"promoImageUrls":   promoImageUrls,
+		"status":           tenant.Status,
+		"bookingMode":      rentFlowNormalizeBookingMode(tenant.BookingMode),
+		"chatThresholdTHB": tenant.ChatThresholdTHB,
+		"plan":             tenant.Plan,
+		"createdAt":        tenant.CreatedAt,
+		"updatedAt":        tenant.UpdatedAt,
 	}
 	if lineSummary := rentFlowPublicLineSummary(tenant.ID); lineSummary != nil {
 		response["lineOfficialAccount"] = lineSummary

@@ -3,6 +3,7 @@ package controllers
 import (
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -105,4 +106,24 @@ func rentFlowCookieSameSite(secure bool) http.SameSite {
 	default:
 		return http.SameSiteStrictMode
 	}
+}
+
+func rentFlowNormalizePhone(value string) string {
+	digits := rentFlowDigitsOnly(value)
+	if strings.HasPrefix(digits, "66") && len(digits) >= 11 {
+		digits = "0" + digits[2:]
+	}
+	return digits
+}
+
+func rentFlowParseThreshold(value string) int64 {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0
+	}
+	amount, err := strconv.ParseInt(trimmed, 10, 64)
+	if err != nil || amount < 0 {
+		return 0
+	}
+	return amount
 }
