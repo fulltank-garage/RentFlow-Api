@@ -60,6 +60,7 @@ func RentFlowPartnerCreateMember(c *gin.Context) {
 		return
 	}
 	rentFlowAudit(c, tenant.ID, "member.create", "member", item.ID, item.Email)
+	rentFlowPublishEntityRealtime(tenant.ID, item.ID, services.RentFlowRealtimeEventMemberChanged, "member")
 	rentFlowSuccess(c, http.StatusCreated, "เพิ่มทีมสำเร็จ", rentFlowPartnerMemberResponse(item))
 }
 
@@ -121,6 +122,7 @@ func RentFlowPartnerUpdateMember(c *gin.Context) {
 		return
 	}
 	rentFlowAudit(c, tenant.ID, "member.update", "member", c.Param("memberId"), role)
+	rentFlowPublishEntityRealtime(tenant.ID, c.Param("memberId"), services.RentFlowRealtimeEventMemberChanged, "member")
 	rentFlowSuccess(c, http.StatusOK, "อัปเดตทีมสำเร็จ", nil)
 }
 
@@ -139,6 +141,7 @@ func RentFlowPartnerDeleteMember(c *gin.Context) {
 		return
 	}
 	rentFlowAudit(c, tenant.ID, "member.delete", "member", c.Param("memberId"), "")
+	rentFlowPublishEntityRealtime(tenant.ID, c.Param("memberId"), services.RentFlowRealtimeEventMemberChanged, "member")
 	rentFlowSuccess(c, http.StatusOK, "ลบทีมสำเร็จ", nil)
 }
 
@@ -193,6 +196,7 @@ func RentFlowPartnerCreatePromotion(c *gin.Context) {
 		return
 	}
 	rentFlowAudit(c, tenant.ID, "promotion.create", "promotion", item.ID, item.Code)
+	rentFlowPublishEntityRealtime(tenant.ID, item.ID, services.RentFlowRealtimeEventPromotionChanged, "promotion")
 	rentFlowSuccess(c, http.StatusCreated, "เพิ่มโปรโมชันสำเร็จ", item)
 }
 
@@ -222,11 +226,12 @@ func RentFlowPartnerUpdatePromotion(c *gin.Context) {
 		return
 	}
 	rentFlowAudit(c, tenant.ID, "promotion.update", "promotion", item.ID, item.Code)
+	rentFlowPublishEntityRealtime(tenant.ID, item.ID, services.RentFlowRealtimeEventPromotionChanged, "promotion")
 	rentFlowSuccess(c, http.StatusOK, "อัปเดตโปรโมชันสำเร็จ", item)
 }
 
 func RentFlowPartnerDeletePromotion(c *gin.Context) {
-	rentFlowPartnerDeleteModel(c, "promotionId", &models.RentFlowPromotion{}, "promotion", "ลบโปรโมชันสำเร็จ")
+	rentFlowPartnerDeleteModel(c, "promotionId", &models.RentFlowPromotion{}, "promotion", "ลบโปรโมชันสำเร็จ", services.RentFlowRealtimeEventPromotionChanged)
 }
 
 func RentFlowPartnerListAddons(c *gin.Context) {
@@ -274,6 +279,7 @@ func RentFlowPartnerCreateAddon(c *gin.Context) {
 		return
 	}
 	rentFlowAudit(c, tenant.ID, "addon.create", "addon", item.ID, item.Name)
+	rentFlowPublishEntityRealtime(tenant.ID, item.ID, services.RentFlowRealtimeEventAddonChanged, "addon")
 	rentFlowSuccess(c, http.StatusCreated, "เพิ่มบริการเสริมสำเร็จ", item)
 }
 
@@ -298,11 +304,12 @@ func RentFlowPartnerUpdateAddon(c *gin.Context) {
 		return
 	}
 	rentFlowAudit(c, tenant.ID, "addon.update", "addon", item.ID, item.Name)
+	rentFlowPublishEntityRealtime(tenant.ID, item.ID, services.RentFlowRealtimeEventAddonChanged, "addon")
 	rentFlowSuccess(c, http.StatusOK, "อัปเดตบริการเสริมสำเร็จ", item)
 }
 
 func RentFlowPartnerDeleteAddon(c *gin.Context) {
-	rentFlowPartnerDeleteModel(c, "addonId", &models.RentFlowAddon{}, "addon", "ลบบริการเสริมสำเร็จ")
+	rentFlowPartnerDeleteModel(c, "addonId", &models.RentFlowAddon{}, "addon", "ลบบริการเสริมสำเร็จ", services.RentFlowRealtimeEventAddonChanged)
 }
 
 func RentFlowPartnerListLeads(c *gin.Context) {
@@ -332,6 +339,7 @@ func RentFlowPartnerCreateLead(c *gin.Context) {
 		return
 	}
 	rentFlowAudit(c, tenant.ID, "lead.create", "lead", item.ID, item.Name)
+	rentFlowPublishEntityRealtime(tenant.ID, item.ID, services.RentFlowRealtimeEventLeadChanged, "lead")
 	rentFlowSuccess(c, http.StatusCreated, "เพิ่มลีดสำเร็จ", item)
 }
 
@@ -356,11 +364,12 @@ func RentFlowPartnerUpdateLead(c *gin.Context) {
 		return
 	}
 	rentFlowAudit(c, tenant.ID, "lead.update", "lead", item.ID, item.Status)
+	rentFlowPublishEntityRealtime(tenant.ID, item.ID, services.RentFlowRealtimeEventLeadChanged, "lead")
 	rentFlowSuccess(c, http.StatusOK, "อัปเดตลีดสำเร็จ", item)
 }
 
 func RentFlowPartnerDeleteLead(c *gin.Context) {
-	rentFlowPartnerDeleteModel(c, "leadId", &models.RentFlowLead{}, "lead", "ลบลีดสำเร็จ")
+	rentFlowPartnerDeleteModel(c, "leadId", &models.RentFlowLead{}, "lead", "ลบลีดสำเร็จ", services.RentFlowRealtimeEventLeadChanged)
 }
 
 func rentFlowPromotionFromPayload(c *gin.Context, tenantID, id string) (models.RentFlowPromotion, bool) {
@@ -458,7 +467,7 @@ func rentFlowLeadFromPayload(c *gin.Context, tenantID, id string) (models.RentFl
 	return models.RentFlowLead{ID: id, TenantID: tenantID, Name: name, Email: strings.TrimSpace(strings.ToLower(payload.Email)), Phone: strings.TrimSpace(payload.Phone), Source: strings.TrimSpace(payload.Source), Status: status, InterestedCar: strings.TrimSpace(payload.InterestedCar), Note: strings.TrimSpace(payload.Note)}, true
 }
 
-func rentFlowPartnerDeleteModel(c *gin.Context, param string, model interface{}, entity, successMessage string) {
+func rentFlowPartnerDeleteModel(c *gin.Context, param string, model interface{}, entity, successMessage, eventType string) {
 	tenant, ok := rentFlowRequireOwnerTenant(c)
 	if !ok {
 		return
@@ -474,6 +483,9 @@ func rentFlowPartnerDeleteModel(c *gin.Context, param string, model interface{},
 		return
 	}
 	rentFlowAudit(c, tenant.ID, entity+".delete", entity, id, "")
+	if strings.TrimSpace(eventType) != "" {
+		rentFlowPublishEntityRealtime(tenant.ID, id, eventType, entity)
+	}
 	rentFlowSuccess(c, http.StatusOK, successMessage, nil)
 }
 

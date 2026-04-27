@@ -109,6 +109,28 @@ func rentFlowPublishCarRealtime(tenantID, carID, eventType string) {
 	})
 }
 
+func rentFlowPublishCarStatusRealtime(tenantID string, car models.RentFlowCar) {
+	unitCount := rentFlowCarUnitCount(car)
+	availableUnits := unitCount
+	if strings.TrimSpace(strings.ToLower(car.Status)) != "available" || !car.IsAvailable {
+		availableUnits = 0
+	}
+
+	services.RentFlowPublishRealtime(services.RentFlowRealtimeEvent{
+		Type:     services.RentFlowRealtimeEventCarStatusChanged,
+		TenantID: tenantID,
+		EntityID: car.ID,
+		Data: gin.H{
+			"carId":              car.ID,
+			"status":             car.Status,
+			"availabilityStatus": car.Status,
+			"isAvailable":        car.IsAvailable && availableUnits > 0,
+			"unitCount":          unitCount,
+			"availableUnits":     availableUnits,
+		},
+	})
+}
+
 func rentFlowPublishSupportRealtime(tenantID, ticketID, eventType string) {
 	services.RentFlowPublishRealtime(services.RentFlowRealtimeEvent{
 		Type:     eventType,
@@ -116,6 +138,18 @@ func rentFlowPublishSupportRealtime(tenantID, ticketID, eventType string) {
 		EntityID: ticketID,
 		Data: gin.H{
 			"ticketId": ticketID,
+		},
+	})
+}
+
+func rentFlowPublishEntityRealtime(tenantID, entityID, eventType, entity string) {
+	services.RentFlowPublishRealtime(services.RentFlowRealtimeEvent{
+		Type:     eventType,
+		TenantID: tenantID,
+		EntityID: entityID,
+		Data: gin.H{
+			"id":     entityID,
+			"entity": entity,
 		},
 	})
 }

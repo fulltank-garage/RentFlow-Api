@@ -208,11 +208,15 @@ func RentFlowPartnerUpdateCar(c *gin.Context) {
 	existing.UnitCount = updated.UnitCount
 	existing.Description = updated.Description
 	existing.LocationID = updated.LocationID
+	statusChanged := existing.Status != updated.Status || existing.IsAvailable != updated.IsAvailable
 	existing.Status = updated.Status
 	existing.IsAvailable = updated.IsAvailable
 
 	imageURLs, _ := rentFlowCarImageURLs(c, tenant, []models.RentFlowCar{existing})
 	rentFlowPublishCarRealtime(tenant.ID, existing.ID, services.RentFlowRealtimeEventCarChanged)
+	if statusChanged {
+		rentFlowPublishCarStatusRealtime(tenant.ID, existing)
+	}
 	rentFlowSuccess(c, http.StatusOK, "บันทึกข้อมูลรถสำเร็จ", rentFlowPartnerCarResponse(c, tenant, existing, imageURLs[existing.ID]))
 }
 

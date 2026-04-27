@@ -127,5 +127,6 @@ func RentFlowCreateReview(c *gin.Context) {
 		return
 	}
 
+	rentFlowPublishEntityRealtime(tenant.ID, review.ID, services.RentFlowRealtimeEventReviewCreated, "review")
 	rentFlowSuccess(c, http.StatusCreated, "ส่งรีวิวสำเร็จ", review)
 }

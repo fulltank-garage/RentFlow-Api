@@ -85,9 +85,13 @@ func RentFlowPartnerUpdateBookingStatus(c *gin.Context) {
 		booking.Note = note
 	}
 	if status == "active" || status == "review" || status == "completed" || status == "cancelled" {
-		if err := rentFlowSyncCarOperationalStatusTx(config.DB, tenant.ID, booking.CarID); err != nil {
+		changed, car, err := rentFlowSyncCarOperationalStatusTx(config.DB, tenant.ID, booking.CarID)
+		if err != nil {
 			rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถอัปเดตสถานะรถได้")
 			return
+		}
+		if changed {
+			rentFlowPublishCarStatusRealtime(tenant.ID, car)
 		}
 	}
 	rentFlowAudit(c, tenant.ID, "booking.update_status", "booking", booking.ID, "status="+status)
@@ -176,6 +180,8 @@ func RentFlowPartnerCreateBookingOperation(c *gin.Context) {
 		nextStatus = rentFlowBookingStatusForOperation(operationType, booking.Status)
 	}
 
+	carStatusChanged := false
+	var statusCar models.RentFlowCar
 	if err := config.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&operation).Error; err != nil {
 			return err
@@ -190,9 +196,12 @@ func RentFlowPartnerCreateBookingOperation(c *gin.Context) {
 			booking.Status = nextStatus
 		}
 		if nextStatus == "active" || nextStatus == "review" || nextStatus == "completed" || nextStatus == "cancelled" {
-			if err := rentFlowSyncCarOperationalStatusTx(tx, tenant.ID, booking.CarID); err != nil {
+			changed, car, err := rentFlowSyncCarOperationalStatusTx(tx, tenant.ID, booking.CarID)
+			if err != nil {
 				return err
 			}
+			carStatusChanged = changed
+			statusCar = car
 		}
 		return nil
 	}); err != nil {
@@ -204,25 +213,28 @@ func RentFlowPartnerCreateBookingOperation(c *gin.Context) {
 	services.CacheDeleteByPrefix(config.Ctx, services.RentFlowCarsCachePrefix())
 	rentFlowPublishBookingRealtime(services.RentFlowRealtimeEventBookingUpdated, booking)
 	rentFlowPublishCarRealtime(tenant.ID, booking.CarID, services.RentFlowRealtimeEventAvailabilityChange)
+	if carStatusChanged {
+		rentFlowPublishCarStatusRealtime(tenant.ID, statusCar)
+	}
 	rentFlowSuccess(c, http.StatusCreated, "บันทึกงานรถสำเร็จ", gin.H{
 		"operation": rentFlowBookingOperationResponse(operation),
 		"booking":   rentFlowPartnerBookingResponse(booking, rentFlowPartnerCarNames(tenant.ID)[booking.CarID]),
 	})
 }
 
-func rentFlowSyncCarOperationalStatusTx(tx *gorm.DB, tenantID, carID string) error {
+func rentFlowSyncCarOperationalStatusTx(tx *gorm.DB, tenantID, carID string) (bool, models.RentFlowCar, error) {
 	if strings.TrimSpace(carID) == "" {
-		return nil
+		return false, models.RentFlowCar{}, nil
 	}
 
 	var car models.RentFlowCar
 	if err := tx.Where("tenant_id = ? AND id = ?", tenantID, carID).First(&car).Error; err != nil {
-		return err
+		return false, models.RentFlowCar{}, err
 	}
 
 	currentStatus := strings.TrimSpace(strings.ToLower(car.Status))
 	if currentStatus == "maintenance" || currentStatus == "hidden" {
-		return nil
+		return false, car, nil
 	}
 
 	var activeCount int64
@@ -230,7 +242,7 @@ func rentFlowSyncCarOperationalStatusTx(tx *gorm.DB, tenantID, carID string) err
 		Where("tenant_id = ? AND car_id = ?", tenantID, carID).
 		Where("status IN ?", []string{"active", "review"}).
 		Count(&activeCount).Error; err != nil {
-		return err
+		return false, models.RentFlowCar{}, err
 	}
 
 	status := "available"
@@ -240,11 +252,18 @@ func rentFlowSyncCarOperationalStatusTx(tx *gorm.DB, tenantID, carID string) err
 		isAvailable = false
 	}
 
-	return tx.Model(&models.RentFlowCar{}).Where("tenant_id = ? AND id = ?", tenantID, carID).Updates(map[string]interface{}{
+	changed := car.Status != status || car.IsAvailable != isAvailable
+	if err := tx.Model(&models.RentFlowCar{}).Where("tenant_id = ? AND id = ?", tenantID, carID).Updates(map[string]interface{}{
 		"status":       status,
 		"is_available": isAvailable,
 		"updated_at":   time.Now(),
-	}).Error
+	}).Error; err != nil {
+		return false, models.RentFlowCar{}, err
+	}
+
+	car.Status = status
+	car.IsAvailable = isAvailable
+	return changed, car, nil
 }
 
 func RentFlowPartnerGetPayments(c *gin.Context) {

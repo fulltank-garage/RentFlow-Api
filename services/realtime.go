@@ -17,8 +17,14 @@ const (
 	RentFlowRealtimeEventPaymentCreated     = "payment.created"
 	RentFlowRealtimeEventPaymentUpdated     = "payment.updated"
 	RentFlowRealtimeEventNotificationNew    = "notification.new"
+	RentFlowRealtimeEventReviewCreated      = "review.created"
 	RentFlowRealtimeEventCarChanged         = "car.changed"
+	RentFlowRealtimeEventCarStatusChanged   = "car.status.changed"
 	RentFlowRealtimeEventBranchChanged      = "branch.changed"
+	RentFlowRealtimeEventAddonChanged       = "addon.changed"
+	RentFlowRealtimeEventPromotionChanged   = "promotion.changed"
+	RentFlowRealtimeEventLeadChanged        = "lead.changed"
+	RentFlowRealtimeEventMemberChanged      = "member.changed"
 	RentFlowRealtimeEventAvailabilityChange = "availability.changed"
 	RentFlowRealtimeEventSupportChanged     = "support.changed"
 	RentFlowRealtimeEventTenantUpdated      = "tenant.updated"
@@ -172,8 +178,12 @@ func rentFlowRealtimeIsMarketplaceEvent(eventType string) bool {
 	case RentFlowRealtimeEventBookingCreated,
 		RentFlowRealtimeEventBookingUpdated,
 		RentFlowRealtimeEventBookingCancelled,
+		RentFlowRealtimeEventReviewCreated,
 		RentFlowRealtimeEventCarChanged,
+		RentFlowRealtimeEventCarStatusChanged,
 		RentFlowRealtimeEventBranchChanged,
+		RentFlowRealtimeEventAddonChanged,
+		RentFlowRealtimeEventPromotionChanged,
 		RentFlowRealtimeEventAvailabilityChange,
 		RentFlowRealtimeEventTenantUpdated:
 		return true

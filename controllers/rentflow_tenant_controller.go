@@ -699,6 +699,14 @@ func rentFlowSlugFromTenantIdentity(value string) string {
 	if host == rootDomain {
 		return ""
 	}
+	if strings.HasSuffix(host, ".localhost") {
+		slug := strings.TrimSuffix(host, ".localhost")
+		if strings.Contains(slug, ".") {
+			parts := strings.Split(slug, ".")
+			slug = parts[len(parts)-1]
+		}
+		return rentFlowNormalizeDomainSlug(slug)
+	}
 	if strings.HasSuffix(host, "."+rootDomain) {
 		slug := strings.TrimSuffix(host, "."+rootDomain)
 		if strings.Contains(slug, ".") {
