@@ -33,6 +33,7 @@ func RegisterRentFlowRoutes(r *gin.Engine) {
 	r.POST("/webhooks/line/:tenantSlug", controllers.RentFlowLineWebhook)
 	r.POST("/availability/check", controllers.RentFlowCheckAvailability)
 	r.GET("/availability/:carId/unavailable-dates", controllers.RentFlowGetUnavailableDates)
+	r.GET("/addons", controllers.RentFlowListAddons)
 
 	r.POST("/bookings/preview", controllers.RentFlowPreviewBookingPrice)
 	r.POST("/bookings", controllers.RentFlowCreateBooking)

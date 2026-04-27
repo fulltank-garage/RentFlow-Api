@@ -242,6 +242,24 @@ func RentFlowPartnerListAddons(c *gin.Context) {
 	rentFlowSuccess(c, http.StatusOK, "ดึงบริการเสริมสำเร็จ", gin.H{"items": items, "total": len(items)})
 }
 
+func RentFlowListAddons(c *gin.Context) {
+	tenant, ok := rentFlowRequireTenant(c)
+	if !ok {
+		return
+	}
+
+	var items []models.RentFlowAddon
+	if err := config.DB.
+		Where("tenant_id = ? AND is_active = ?", tenant.ID, true).
+		Order("created_at DESC").
+		Find(&items).Error; err != nil {
+		rentFlowError(c, http.StatusInternalServerError, "ไม่สามารถดึงบริการเสริมได้")
+		return
+	}
+
+	rentFlowSuccess(c, http.StatusOK, "ดึงบริการเสริมสำเร็จ", gin.H{"items": items, "total": len(items)})
+}
+
 func RentFlowPartnerCreateAddon(c *gin.Context) {
 	tenant, ok := rentFlowRequireOwnerTenant(c)
 	if !ok {
